@@ -18,11 +18,12 @@ from src.utils.ocr import (
 
 class VideoProcessor:
     def __init__(self):
-        # --- Start of Final, os.path-based .env Parsing ---
+        # --- Start of Final, Manual Path Concatenation ---
         # Get the absolute path of the script, go up two directories to find the project root
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        dotenv_path = os.path.join(project_root, '.env')
-        print(f"DEBUG: Manually parsing .env from absolute path: {dotenv_path}")
+        # MANUALLY build the path for Windows due to os.path.join errors
+        dotenv_path = f"{project_root}\\.env"
+        print(f"DEBUG: MANUALLY parsing .env from absolute path: {dotenv_path}")
 
         try:
             with open(dotenv_path, 'r') as f:
