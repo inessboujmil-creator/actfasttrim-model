@@ -1,8 +1,9 @@
 
 import os
 import time
-from pathlib import Path
 import cv2
+
+# Removed pathlib, using os.path for reliability
 
 from src.utils.video import (
     cleanup_processed_db,
@@ -17,9 +18,10 @@ from src.utils.ocr import (
 
 class VideoProcessor:
     def __init__(self):
-        # --- Start of Manual .env Parsing ---
-        project_root = Path(__file__).parent.parent
-        dotenv_path = project_root / '.env'
+        # --- Start of Final, os.path-based .env Parsing ---
+        # Get the absolute path of the script, go up two directories to find the project root
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        dotenv_path = os.path.join(project_root, '.env')
         print(f"DEBUG: Manually parsing .env from absolute path: {dotenv_path}")
 
         try:
