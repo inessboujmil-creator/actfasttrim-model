@@ -3,8 +3,6 @@ import os
 import time
 import cv2
 
-# Removed pathlib, using os.path for reliability
-
 from src.utils.video import (
     cleanup_processed_db,
     get_processed_files,
@@ -18,12 +16,11 @@ from src.utils.ocr import (
 
 class VideoProcessor:
     def __init__(self):
-        # --- Start of Final, Manual Path Concatenation ---
-        # Get the absolute path of the script, go up two directories to find the project root
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        # MANUALLY build the path for Windows due to os.path.join errors
-        dotenv_path = f"{project_root}\\.env"
-        print(f"DEBUG: MANUALLY parsing .env from absolute path: {dotenv_path}")
+        # --- Start of CWD-based .env Loading ---
+        # The script is always run from the project root, so CWD is the correct path.
+        project_root = os.getcwd()
+        dotenv_path = os.path.join(project_root, '.env')
+        print(f"DEBUG: Attempting to load .env from CWD: {dotenv_path}")
 
         try:
             with open(dotenv_path, 'r') as f:
@@ -39,9 +36,10 @@ class VideoProcessor:
                             break
         except FileNotFoundError:
             print(f"ERROR: The .env file was not found at {dotenv_path}")
+            print("FATAL: Please ensure the .env file exists in the same directory as main.py")
         except Exception as e:
             print(f"ERROR: Could not parse .env file. Reason: {e}")
-        # --- End of Manual .env Parsing ---
+        # --- End of CWD-based .env Loading ---
 
         self.folder_configs = [
             {"input": r"E:\Records\Local Records\Ch1_CAM01", "output": r"E:\Records\Local Records\Trimmed_Cam01"},
@@ -58,6 +56,7 @@ class VideoProcessor:
         if self.tesseract_cmd:
             import pytesseract
             pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
+            print("INFO: Tesseract command path loaded successfully. OCR is active.")
         else:
             print("WARNING: Tesseract path not loaded. OCR will fail.")
 
@@ -201,7 +200,8 @@ class VideoProcessor:
                         trim_video_clip(video_path, output_path, start_seconds=match_second)
                         found_times_in_video.add(timestamp_str)
                 else:
-                    print(f"  -> Scanning at video time: {int(current_pos_sec)}s...", flush=True)
+                    # This message will now only appear if OCR genuinely fails to read a timestamp
+                    print(f"  -> OCR scan at video time: {int(current_pos_sec)}s... (No valid timestamp detected)", flush=True)
             
             cap.release()
             add_to_processed_files(self.processed_files_db, filename)
