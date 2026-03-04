@@ -55,8 +55,66 @@ class VideoProcessor:
 
         while True:
             try:
-                # ... (main loop code remains the same)
-                pass
+                print("\nINFO: Scanning all folders for new files...")
+                
+                unprocessed_by_folder_and_day = {}
+                all_current_filenames = set()
+                processed_files = get_processed_files(self.processed_files_db)
+
+                for folder_config in self.folder_configs:
+                    folder_path = folder_config["input"]
+                    files_in_folder_by_day = {}
+                    try:
+                        for filename in os.listdir(folder_path):
+                            if filename.lower().endswith((".avi", ".mp4", ".mov")):
+                                all_current_filenames.add(filename)
+                                if filename not in processed_files:
+                                    day_str = filename[:8]
+                                    if day_str.isdigit() and len(day_str) == 8:
+                                        if day_str not in files_in_folder_by_day:
+                                            files_in_folder_by_day[day_str] = []
+                                        files_in_folder_by_day[day_str].append(os.path.join(folder_path, filename))
+                    except FileNotFoundError:
+                        print(f"WARNING: Folder not found: {folder_path}. Skipping.")
+                        continue
+                    
+                    if files_in_folder_by_day:
+                        unprocessed_by_folder_and_day[folder_path] = files_in_folder_by_day
+                
+                cleanup_processed_db(self.processed_files_db, all_current_filenames)
+
+                if not unprocessed_by_folder_and_day:
+                    print("INFO: No new video files found.")
+                else:
+                    print(f"INFO: Found new files to process in {len(unprocessed_by_folder_and_day)} folder(s).")
+
+                turn_index = 0
+                while unprocessed_by_folder_and_day:
+                    try:
+                        oldest_day_global = min(day for folder_days in unprocessed_by_folder_and_day.values() for day in folder_days.keys())
+                    except ValueError:
+                        break 
+
+                    print(f"\n--- Processing oldest day found: {oldest_day_global} ---")
+                    
+                    folder_to_process = self.folder_configs[turn_index]["input"]
+
+                    if folder_to_process in unprocessed_by_folder_and_day and oldest_day_global in unprocessed_by_folder_and_day[folder_to_process]:
+                        files_for_day = unprocessed_by_folder_and_day[folder_to_process][oldest_day_global]
+                        print(f"-> Turn for '{os.path.basename(folder_to_process)}': Processing {len(files_for_day)} file(s).")
+
+                        for video_path in sorted(files_for_day):
+                            self._process_single_video(video_path)
+
+                        del unprocessed_by_folder_and_day[folder_to_process][oldest_day_global]
+                        if not unprocessed_by_folder_and_day[folder_to_process]:
+                            del unprocessed_by_folder_and_day[folder_to_process]
+                    
+                    turn_index = (turn_index + 1) % len(self.folder_configs)
+                
+                print(f"\nINFO: Scan cycle complete. Waiting for {self.scan_interval} seconds...")
+                time.sleep(self.scan_interval)
+
             except KeyboardInterrupt:
                 print("\nINFO: Manual interruption detected. Shutting down.")
                 break
@@ -100,12 +158,10 @@ class VideoProcessor:
                 if ocr_time:
                     print(f"  {ocr_time.strftime('%H:%M:%S')}", flush=True)
 
-                    # --- Start of Corrected Fluctuation Logic ---
                     if last_ocr_time and is_time_fluctuation(last_ocr_time, ocr_time, self.ocr_fluctuation_seconds):
                         print(f"  >> WARNING: Time fluctuation detected. Skipping check for this frame to prevent false match.")
-                        last_ocr_time = ocr_time # Update time but skip the check for this frame
-                        continue # Immediately move to the next frame
-                    # --- End of Corrected Fluctuation Logic ---
+                        last_ocr_time = ocr_time 
+                        continue 
 
                     last_ocr_time = ocr_time
                     timestamp_str = ocr_time.strftime('%H:%M:%S')
@@ -132,4 +188,3 @@ class VideoProcessor:
 
         except Exception as e:
             print(f"ERROR: Failed to process {filename}. Reason: {e}")
-
