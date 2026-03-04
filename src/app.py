@@ -28,7 +28,8 @@ class VideoProcessor:
                     if line and not line.startswith('#') and '=' in line:
                         key, value = line.split('=', 1)
                         key = key.strip()
-                        value = value.strip()
+                        # Strip whitespace and then strip any surrounding quotes
+                        value = value.strip().strip('"')
                         if key == "TESSERACT_CMD":
                             os.environ[key] = value
                             print(f"DEBUG: Successfully set TESSERACT_CMD from config.txt.")
