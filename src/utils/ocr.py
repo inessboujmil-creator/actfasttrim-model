@@ -1,46 +1,62 @@
 
-import re
-from datetime import datetime
+import pytesseract
 import cv2
-try:
-    import pytesseract
-except ImportError:
-    print("Pytesseract not found. Please install it using: pip install pytesseract")
-    exit()
+import re
+import numpy as np
+from datetime import datetime, time, timedelta
 
-def extract_timestamp_from_frame(frame, roi_coords):
-    """
-    Performs OCR on a specific region of a video frame to find a timestamp.
-    """
+def extract_timestamp_from_frame(frame, roi):
+    y, h, x, w = roi
+    roi_frame = frame[y:h, x:w]
+
+    # --- Start of new debug code ---
+    # Save the exact frame being processed for manual inspection.
+    cv2.imwrite("debug_frame.png", roi_frame)
+    # --- End of new debug code ---
+
     try:
-        # Crop the frame to the Region of Interest (ROI)
-        roi = frame[roi_coords[0]:roi_coords[1], roi_coords[2]:roi_coords[3]]
-        # Convert to grayscale for better OCR performance
-        gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        # Pre-processing steps from previous attempts
+        gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+        inverted_frame = cv2.bitwise_not(gray_frame)
         
-        # Use Tesseract to find text, configured for a single line of text
-        text = pytesseract.image_to_string(gray_roi, config='--psm 7').strip()
-
-        # Search for a HH:MM:SS pattern in the extracted text
-        match = re.search(r"(\d{2}:\d{2}:\d{2})", text)
-        if match:
-            return match.group(1)
-            
+        # Use Tesseract to extract text
+        custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:'
+        text = pytesseract.image_to_string(inverted_frame, config=custom_config)
+        
+    # --- Start of new explicit error handling ---
+    except pytesseract.TesseractNotFoundError as e:
+        print(f"\n\n--- OCR ERROR ---")
+        print(f"FATAL: Tesseract is not installed or not in your PATH/environment variable.")
+        print(f"Full Error: {e}")
+        print(f"-----------------\n\n")
+        return None
     except Exception as e:
-        print(f"ERROR: An error occurred during OCR: {e}")
-        
+        print(f"\n\n--- OCR ERROR ---")
+        print(f"An unexpected error occurred during OCR text extraction.")
+        print(f"Full Error: {e}")
+        print(f"-----------------\n\n")
+        return None
+    # --- End of new explicit error handling ---
+
+    # Search for a timestamp in the format HH:MM:SS
+    match = re.search(r'(\d{2}):(\d{2}):(\d{2})', text)
+    if match:
+        try:
+            h, m, s = map(int, match.groups())
+            if 0 <= h < 24 and 0 <= m < 60 and 0 <= s < 60:
+                return time(h, m, s)
+        except ValueError:
+            return None
     return None
 
-def is_time_fluctuation(time_str1, time_str2, fluctuation_seconds):
-    """
-    Checks if the difference between two time strings exceeds a defined threshold,
-    indicating an illogical jump.
-    """
-    try:
-        t1 = datetime.strptime(time_str1, '%H:%M:%S')
-        t2 = datetime.strptime(time_str2, '%H:%M:%S')
-        delta = abs((t2 - t1).total_seconds())
-        # A fluctuation is a jump greater than the threshold but not a day-wrap
-        return delta > fluctuation_seconds and delta < 86300 # 23h 58m 20s
-    except ValueError:
-        return True # Treat parsing errors as fluctuations
+def is_time_fluctuation(last_time, current_time, threshold_seconds):
+    last_dt = datetime.combine(datetime.today(), last_time)
+    current_dt = datetime.combine(datetime.today(), current_time)
+
+    # Handle overnight case
+    if current_dt < last_dt:
+        current_dt += timedelta(days=1)
+
+    time_difference = (current_dt - last_dt).total_seconds()
+
+    return time_difference > threshold_seconds

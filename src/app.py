@@ -33,7 +33,15 @@ class VideoProcessor:
         self.cam_folders = [config["input"] for config in self.folder_configs]
         self.processed_files_db = os.getenv("PROCESSED_FILES_DB", "processed_files.txt")
         self.scan_interval = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
+        
+        # --- Start of Tesseract path debugging ---
         self.tesseract_cmd = os.getenv("TESSERACT_CMD")
+        print(f"DEBUG: Tesseract command path from .env: {self.tesseract_cmd}")
+        if self.tesseract_cmd:
+            import pytesseract
+            pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
+        # --- End of Tesseract path debugging ---
+
         self.target_times = [
             "00:30:00", "01:30:00", "02:30:00", "03:30:00", "04:30:00", "05:30:00",
             "06:30:00", "08:30:00", "09:45:00", "10:45:00", "13:00:00", "14:00:00",
@@ -41,10 +49,6 @@ class VideoProcessor:
         ]
         self.timestamp_roi = [10, 50, 1100, 1280]
         self.ocr_fluctuation_seconds = 5
-
-        if self.tesseract_cmd:
-            import pytesseract
-            pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
 
     def run(self):
         print("--- Automated Video Processing System ---")
@@ -138,7 +142,7 @@ class VideoProcessor:
 
             found_times_in_video = set()
             last_ocr_time = None
-            frame_skip = 90  # Process a frame every ~3 seconds of video time
+            frame_skip = 90
             frame_count = 0
 
             while cap.isOpened():
@@ -154,7 +158,6 @@ class VideoProcessor:
                 ocr_time = extract_timestamp_from_frame(frame, self.timestamp_roi)
 
                 if ocr_time:
-                    # New, cleaner log format as requested by the user.
                     print(f"  {ocr_time.strftime('%H:%M:%S')}", flush=True)
 
                     if last_ocr_time and is_time_fluctuation(last_ocr_time, ocr_time, self.ocr_fluctuation_seconds):
@@ -177,7 +180,6 @@ class VideoProcessor:
                         trim_video_clip(video_path, output_path, start_seconds=match_second)
                         found_times_in_video.add(timestamp_str)
                 else:
-                    # If OCR fails, fall back to showing scan progress to make it clear the program isn't frozen.
                     print(f"  -> Scanning at video time: {int(current_pos_sec)}s...", flush=True)
             
             cap.release()
