@@ -1,11 +1,9 @@
-
 import os
 import time
 from dotenv import load_dotenv
 import cv2
 
 from src.utils.video import (
-    get_video_files_by_folder_and_day,
     cleanup_processed_db,
     get_processed_files,
     add_to_processed_files,
@@ -18,9 +16,8 @@ from src.utils.ocr import (
 
 class VideoProcessor:
     def __init__(self):
-        load_dotenv() # Still useful for TESSERACT_CMD or other settings
+        load_dotenv()
 
-        # --- New hardcoded folder configuration ---
         self.folder_configs = [
             {
                 "input": r"E:\Records\Local Records\Ch1_CAM01",
@@ -33,8 +30,6 @@ class VideoProcessor:
         ]
 
         self.cam_folders = [config["input"] for config in self.folder_configs]
-        # ------------------------------------------
-
         self.processed_files_db = os.getenv("PROCESSED_FILES_DB", "processed_files.txt")
         self.scan_interval = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
         self.tesseract_cmd = os.getenv("TESSERACT_CMD")
@@ -52,90 +47,70 @@ class VideoProcessor:
 
     def run(self):
         print("--- Automated Video Processing System ---")
-        print(f"Monitoring folders: {", ".join(self.cam_folders)}")
+        print(f"Monitoring folders: {', '.join(self.cam_folders)}")
         print("System started. Press Ctrl+C to stop.")
 
         while True:
             try:
-                videos_by_folder, all_filenames = get_video_files_by_folder_and_day(self.cam_folders)
-                cleanup_processed_db(self.processed_files_db, all_filenames)
+                print("\nINFO: Scanning all folders for new files...")
+                
+                unprocessed_by_folder_and_day = {}
+                all_current_filenames = set()
                 processed_files = get_processed_files(self.processed_files_db)
 
-                oldest_day = None
-                for folder in self.cam_folders:
-                    for day in sorted(videos_by_folder[folder].keys()):
-                        if any(os.path.basename(v) not in processed_files for v in videos_by_folder[folder][day]):
-                            if oldest_day is None or day < oldest_day:
-                                oldest_day = day
+                for folder_config in self.folder_configs:
+                    folder_path = folder_config["input"]
+                    files_in_folder_by_day = {}
+                    try:
+                        for filename in os.listdir(folder_path):
+                            if filename.lower().endswith(('.avi', '.mp4', '.mov')):
+                                all_current_filenames.add(filename)
+                                if filename not in processed_files:
+                                    day_str = filename[:8]
+                                    if day_str.isdigit() and len(day_str) == 8:
+                                        if day_str not in files_in_folder_by_day:
+                                            files_in_folder_by_day[day_str] = []
+                                        files_in_folder_by_day[day_str].append(os.path.join(folder_path, filename))
+                    except FileNotFoundError:
+                        print(f"WARNING: Folder not found: {folder_path}. Skipping.")
+                        continue
+                    
+                    if files_in_folder_by_day:
+                        unprocessed_by_folder_and_day[folder_path] = files_in_folder_by_day
+                
+                cleanup_processed_db(self.processed_files_db, all_current_filenames)
 
-                if oldest_day is None:
-                    print(f"INFO: No new videos to process. Waiting for {self.scan_interval} seconds...")
-                    time.sleep(self.scan_interval)
-                    continue
+                if not unprocessed_by_folder_and_day:
+                    print("INFO: No new video files found.")
+                else:
+                    print(f"INFO: Found new files to process in {len(unprocessed_by_folder_and_day)} folder(s).")
 
-                print(f"--- Processing oldest day: {oldest_day} ---")
+                turn_index = 0
+                while unprocessed_by_folder_and_day:
+                    try:
+                        oldest_day_global = min(day for folder_days in unprocessed_by_folder_and_day.values() for day in folder_days.keys())
+                    except ValueError:
+                        break 
 
-                # Updated turn-based processing loop
-                for config in self.folder_configs:
-                    folder = config["input"]
-                    output_folder = config["output"]
+                    print(f"\n--- Processing oldest day found: {oldest_day_global} ---")
+                    
+                    folder_to_process = self.folder_configs[turn_index]["input"]
 
-                    if oldest_day in videos_by_folder[folder]:
-                        videos_to_process = [v for v in videos_by_folder[folder][oldest_day] if os.path.basename(v) not in processed_files]
-                        
-                        for video_path in sorted(videos_to_process):
-                            filename = os.path.basename(video_path)
-                            print(f"\nPROCESSING: '{filename}' in '{os.path.basename(folder)}'")
-                            
-                            cap = cv2.VideoCapture(video_path)
-                            if not cap.isOpened():
-                                print(f"ERROR: Could not open video file: {video_path}")
-                                continue
+                    if folder_to_process in unprocessed_by_folder_and_day and oldest_day_global in unprocessed_by_folder_and_day[folder_to_process]:
+                        files_for_day = unprocessed_by_folder_and_day[folder_to_process][oldest_day_global]
+                        print(f"-> Turn for '{os.path.basename(folder_to_process)}': Processing {len(files_for_day)} file(s).")
 
-                            fps = cap.get(cv2.CAP_PROP_FPS)
-                            if fps == 0:
-                                print(f"WARNING: Video FPS is 0 for '{filename}'. Cannot calculate time. Skipping.")
-                                cap.release()
-                                add_to_processed_files(self.processed_files_db, filename)
-                                continue
+                        for video_path in sorted(files_for_day):
+                            self._process_single_video(video_path)
 
-                            found_times_in_video = set()
-                            last_valid_timestamp = None
-
-                            while cap.isOpened():
-                                ret, frame = cap.read()
-                                if not ret:
-                                    break
-                                
-                                timestamp_str = extract_timestamp_from_frame(frame, self.timestamp_roi)
-
-                                if timestamp_str:
-                                    if last_valid_timestamp and is_time_fluctuation(last_valid_timestamp, timestamp_str, self.ocr_fluctuation_seconds):
-                                        print(f"  -> OCR FLUCTUATION: Jump from {last_valid_timestamp} to {timestamp_str}. Skipping frame.")
-                                        continue
-                                    
-                                    last_valid_timestamp = timestamp_str
-
-                                    if timestamp_str in self.target_times and timestamp_str not in found_times_in_video:
-                                        print(f"  -> TARGET FOUND: {timestamp_str} in '{filename}'")
-                                        
-                                        frame_number = cap.get(cv2.CAP_PROP_POS_FRAMES)
-                                        match_second = frame_number / fps
-
-                                        # --- Use the specific output folder from the config ---
-                                        os.makedirs(output_folder, exist_ok=True)
-                                        
-                                        base_name = os.path.splitext(filename)[0]
-                                        time_filename_part = timestamp_str.replace(':', '_')
-                                        output_filename = f"{base_name}__{time_filename_part}.mp4"
-                                        output_path = os.path.join(output_folder, output_filename)
-
-                                        trim_video_clip(video_path, output_path, start_seconds=match_second)
-                                        found_times_in_video.add(timestamp_str)
-                            
-                            cap.release()
-                            add_to_processed_files(self.processed_files_db, filename)
-                            print(f"FINISHED: '{filename}'. Found {len(found_times_in_video)} target(s).")
+                        del unprocessed_by_folder_and_day[folder_to_process][oldest_day_global]
+                        if not unprocessed_by_folder_and_day[folder_to_process]:
+                            del unprocessed_by_folder_and_day[folder_to_process]
+                    
+                    turn_index = (turn_index + 1) % len(self.folder_configs)
+                
+                print(f"\nINFO: Scan cycle complete. Waiting for {self.scan_interval} seconds...")
+                time.sleep(self.scan_interval)
 
             except KeyboardInterrupt:
                 print("\nINFO: Manual interruption detected. Shutting down.")
@@ -143,3 +118,71 @@ class VideoProcessor:
             except Exception as e:
                 print(f"An unexpected error occurred in the main loop: {e}")
                 time.sleep(20)
+
+    def _process_single_video(self, video_path):
+        filename = os.path.basename(video_path)
+        folder_info = next((item for item in self.folder_configs if item["input"] in video_path), None)
+        if not folder_info:
+            print(f"WARNING: No folder configuration found for {video_path}. Skipping.")
+            return
+
+        print(f"\nPROCESSING: '{filename}' in '{os.path.basename(folder_info['input'])}'")
+        print("_______________________________________")
+
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                print(f"ERROR: Could not open video file: {video_path}")
+                return
+
+            found_times_in_video = set()
+            last_ocr_time = None
+            # Increased from 15 to ~90 to make scanning ~6x faster
+            frame_skip = 90
+            frame_count = 0
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                frame_count += 1
+                if frame_count % frame_skip != 0:
+                    continue
+
+                current_pos_sec = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
+
+                # This provides a continuous log of the scan progress.
+                print(f"  -> Scanning at video time: {int(current_pos_sec)}s...", flush=True)
+
+                ocr_time = extract_timestamp_from_frame(frame, self.timestamp_roi)
+
+                if ocr_time:
+                    print(f"  [OCR Reading] Detected: {ocr_time.strftime('%H:%M:%S')} at {int(current_pos_sec)}s", flush=True)
+                    
+                    if last_ocr_time and is_time_fluctuation(last_ocr_time, ocr_time, self.ocr_fluctuation_seconds):
+                        print(f"WARNING: Potential time fluctuation detected between {last_ocr_time.strftime('%H:%M:%S')} and {ocr_time.strftime('%H:%M:%S')}")
+
+                    last_ocr_time = ocr_time
+                    timestamp_str = ocr_time.strftime('%H:%M:%S')
+
+                    if timestamp_str in self.target_times and timestamp_str not in found_times_in_video:
+                        print(f"  >> SUCCESS: Match found for target time '{timestamp_str}'! <<")
+                        
+                        match_second = (ocr_time.hour * 3600) + (ocr_time.minute * 60) + ocr_time.second
+                        output_filename = f"{os.path.splitext(filename)[0]}_trimmed_{timestamp_str.replace(':', '')}.avi"
+                        output_path = os.path.join(folder_info["output"], output_filename)
+
+                        if not os.path.exists(folder_info["output"]):
+                            os.makedirs(folder_info["output"])
+                        
+                        print(f"  >> ACTION: Initializing trim to '{output_path}'...")
+                        trim_video_clip(video_path, output_path, start_seconds=match_second)
+                        found_times_in_video.add(timestamp_str)
+            
+            cap.release()
+            add_to_processed_files(self.processed_files_db, filename)
+            print(f"FINISHED: '{filename}'. Found {len(found_times_in_video)} target(s).")
+
+        except Exception as e:
+            print(f"ERROR: Failed to process {filename}. Reason: {e}")
