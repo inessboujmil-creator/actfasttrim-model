@@ -2,6 +2,7 @@
 import os
 import time
 from dotenv import load_dotenv
+from pathlib import Path
 import cv2
 
 from src.utils.video import (
@@ -17,7 +18,13 @@ from src.utils.ocr import (
 
 class VideoProcessor:
     def __init__(self):
-        load_dotenv()
+        # --- Robust .env loading ---
+        project_root = Path(__file__).parent.parent
+        dotenv_path = project_root / '.env'
+        
+        print(f"DEBUG: Attempting to load .env from absolute path: {dotenv_path}")
+        load_dotenv(dotenv_path=dotenv_path)
+        # ---
 
         self.folder_configs = [
             {
@@ -39,6 +46,10 @@ class VideoProcessor:
         if self.tesseract_cmd:
             import pytesseract
             pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
+        else:
+            print("WARNING: Tesseract path not loaded. OCR will fail.")
+            print(f"         Please ensure the '.env' file exists at: {dotenv_path}")
+
 
         self.target_times = [
             "00:30:00", "01:30:00", "02:30:00", "03:30:00", "04:30:00", "05:30:00",
