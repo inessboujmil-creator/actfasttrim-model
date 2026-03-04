@@ -1,3 +1,4 @@
+
 import os
 import time
 from dotenv import load_dotenv
@@ -47,7 +48,7 @@ class VideoProcessor:
 
     def run(self):
         print("--- Automated Video Processing System ---")
-        print(f"Monitoring folders: {', '.join(self.cam_folders)}")
+        print(f"Monitoring folders: {", ".join(self.cam_folders)}")
         print("System started. Press Ctrl+C to stop.")
 
         while True:
@@ -63,7 +64,7 @@ class VideoProcessor:
                     files_in_folder_by_day = {}
                     try:
                         for filename in os.listdir(folder_path):
-                            if filename.lower().endswith(('.avi', '.mp4', '.mov')):
+                            if filename.lower().endswith((".avi", ".mp4", ".mov")):
                                 all_current_filenames.add(filename)
                                 if filename not in processed_files:
                                     day_str = filename[:8]
@@ -137,8 +138,7 @@ class VideoProcessor:
 
             found_times_in_video = set()
             last_ocr_time = None
-            # Increased from 15 to ~90 to make scanning ~6x faster
-            frame_skip = 90
+            frame_skip = 90  # Process a frame every ~3 seconds of video time
             frame_count = 0
 
             while cap.isOpened():
@@ -151,15 +151,12 @@ class VideoProcessor:
                     continue
 
                 current_pos_sec = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
-
-                # This provides a continuous log of the scan progress.
-                print(f"  -> Scanning at video time: {int(current_pos_sec)}s...", flush=True)
-
                 ocr_time = extract_timestamp_from_frame(frame, self.timestamp_roi)
 
                 if ocr_time:
-                    print(f"  [OCR Reading] Detected: {ocr_time.strftime('%H:%M:%S')} at {int(current_pos_sec)}s", flush=True)
-                    
+                    # New, cleaner log format as requested by the user.
+                    print(f"  {ocr_time.strftime('%H:%M:%S')}", flush=True)
+
                     if last_ocr_time and is_time_fluctuation(last_ocr_time, ocr_time, self.ocr_fluctuation_seconds):
                         print(f"WARNING: Potential time fluctuation detected between {last_ocr_time.strftime('%H:%M:%S')} and {ocr_time.strftime('%H:%M:%S')}")
 
@@ -179,6 +176,9 @@ class VideoProcessor:
                         print(f"  >> ACTION: Initializing trim to '{output_path}'...")
                         trim_video_clip(video_path, output_path, start_seconds=match_second)
                         found_times_in_video.add(timestamp_str)
+                else:
+                    # If OCR fails, fall back to showing scan progress to make it clear the program isn't frozen.
+                    print(f"  -> Scanning at video time: {int(current_pos_sec)}s...", flush=True)
             
             cap.release()
             add_to_processed_files(self.processed_files_db, filename)
