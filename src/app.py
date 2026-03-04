@@ -16,14 +16,13 @@ from src.utils.ocr import (
 
 class VideoProcessor:
     def __init__(self):
-        # --- Start of CWD-based .env Loading ---
-        # The script is always run from the project root, so CWD is the correct path.
+        # --- Start of config.txt Loading ---
         project_root = os.getcwd()
-        dotenv_path = os.path.join(project_root, '.env')
-        print(f"DEBUG: Attempting to load .env from CWD: {dotenv_path}")
+        config_path = os.path.join(project_root, 'config.txt')
+        print(f"DEBUG: Attempting to load config from: {config_path}")
 
         try:
-            with open(dotenv_path, 'r') as f:
+            with open(config_path, 'r') as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith('#') and '=' in line:
@@ -31,15 +30,15 @@ class VideoProcessor:
                         key = key.strip()
                         value = value.strip()
                         if key == "TESSERACT_CMD":
-                            os.environ[key] = value  # Set variable for this script run
-                            print(f"DEBUG: Manually set os.environ['TESSERACT_CMD'].")
+                            os.environ[key] = value
+                            print(f"DEBUG: Successfully set TESSERACT_CMD from config.txt.")
                             break
         except FileNotFoundError:
-            print(f"ERROR: The .env file was not found at {dotenv_path}")
-            print("FATAL: Please ensure the .env file exists in the same directory as main.py")
+            print(f"ERROR: The config.txt file was not found at {config_path}")
+            print("FATAL: Please ensure the config.txt file exists in the same directory as main.py")
         except Exception as e:
-            print(f"ERROR: Could not parse .env file. Reason: {e}")
-        # --- End of CWD-based .env Loading ---
+            print(f"ERROR: Could not parse config.txt file. Reason: {e}")
+        # --- End of config.txt Loading ---
 
         self.folder_configs = [
             {"input": r"E:\Records\Local Records\Ch1_CAM01", "output": r"E:\Records\Local Records\Trimmed_Cam01"},
