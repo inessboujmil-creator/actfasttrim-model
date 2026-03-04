@@ -1,7 +1,6 @@
 
 import os
 import time
-from dotenv import load_dotenv
 from pathlib import Path
 import cv2
 
@@ -18,23 +17,32 @@ from src.utils.ocr import (
 
 class VideoProcessor:
     def __init__(self):
-        # --- Robust .env loading ---
+        # --- Start of Manual .env Parsing ---
         project_root = Path(__file__).parent.parent
         dotenv_path = project_root / '.env'
-        
-        print(f"DEBUG: Attempting to load .env from absolute path: {dotenv_path}")
-        load_dotenv(dotenv_path=dotenv_path)
-        # ---
+        print(f"DEBUG: Manually parsing .env from absolute path: {dotenv_path}")
+
+        try:
+            with open(dotenv_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip()
+                        if key == "TESSERACT_CMD":
+                            os.environ[key] = value  # Set variable for this script run
+                            print(f"DEBUG: Manually set os.environ['TESSERACT_CMD'].")
+                            break
+        except FileNotFoundError:
+            print(f"ERROR: The .env file was not found at {dotenv_path}")
+        except Exception as e:
+            print(f"ERROR: Could not parse .env file. Reason: {e}")
+        # --- End of Manual .env Parsing ---
 
         self.folder_configs = [
-            {
-                "input": r"E:\Records\Local Records\Ch1_CAM01",
-                "output": r"E:\Records\Local Records\Trimmed_Cam01"
-            },
-            {
-                "input": r"E:\Records\Local Records\Ch1_CAM02",
-                "output": r"E:\Records\Local Records\Trimmed_Cam02"
-            }
+            {"input": r"E:\Records\Local Records\Ch1_CAM01", "output": r"E:\Records\Local Records\Trimmed_Cam01"},
+            {"input": r"E:\Records\Local Records\Ch1_CAM02", "output": r"E:\Records\Local Records\Trimmed_Cam02"}
         ]
 
         self.cam_folders = [config["input"] for config in self.folder_configs]
@@ -42,14 +50,13 @@ class VideoProcessor:
         self.scan_interval = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
         
         self.tesseract_cmd = os.getenv("TESSERACT_CMD")
-        print(f"DEBUG: Tesseract command path from .env: {self.tesseract_cmd}")
+        print(f"DEBUG: Tesseract command path from os.getenv: {self.tesseract_cmd}")
+        
         if self.tesseract_cmd:
             import pytesseract
             pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
         else:
             print("WARNING: Tesseract path not loaded. OCR will fail.")
-            print(f"         Please ensure the '.env' file exists at: {dotenv_path}")
-
 
         self.target_times = [
             "00:30:00", "01:30:00", "02:30:00", "03:30:00", "04:30:00", "05:30:00",
