@@ -1,41 +1,32 @@
-# -----------------------------------------------------------------------------
-# Main Configuration for ACTFAST Video Trimmer
-# -----------------------------------------------------------------------------
-#
-# - Use forward slashes (/) for paths, even on Windows (e.g., C:/Users/...).
-# - Do not add a trailing slash to folder paths.
-#
-# -----------------------------------------------------------------------------
 
 [SETTINGS]
-# Path to the Tesseract OCR executable.
-# Example: TESSERACT_PATH = C:/Program Files/Tesseract-OCR/tesseract.exe
-TESSERACT_PATH = C:/Program Files/Tesseract-OCR/tesseract.exe
+# Path to the Tesseract executable.
+# Example: C:\Program Files\Tesseract-OCR\tesseract.exe
+TESSERACT_PATH = C:\Program Files\Tesseract-OCR\tesseract.exe
 
-# The (Y, X) coordinates for the timestamp region of interest (ROI).
-# Format: [y1, y2, x1, x2] (a JSON array)
-TIMESTAMP_ROI = [450, 480, 800, 915]
+# The region of the video frame where the timestamp is located.
+# Format is a JSON array: [y_start, y_end, x_start, x_end]
+TIMESTAMP_ROI = [20, 40, 610, 710]
 
-# The number of seconds a timestamp must jump to be considered a "fluctuation".
+# The grayscale threshold (0-255) for converting the timestamp to pure black and white.
+OCR_THRESHOLD = 190
+
+# The maximum number of seconds allowed for the OCR time to jump forward.
 OCR_FLUCTUATION_SECONDS = 300
 
-# The number of days to look back for unprocessed videos.
+# The number of past days to scan for new video files.
 DAYS_TO_PROCESS = 7
 
-# How often (in seconds) to scan the source folders for new videos.
-SCAN_INTERVAL_SECONDS = 300
-
-# A comma-separated list of HH:MM:SS timestamps to trim.
+# A comma-separated list of target times in HH:MM:SS format to find and trim.
 TARGET_TIMES = 00:30:00, 01:30:00, 02:30:00, 03:30:00, 04:30:00, 05:30:00, 06:30:00, 08:30:00, 09:45:00, 10:45:00, 13:00:00, 14:00:00, 16:00:00, 17:45:00, 20:30:00, 21:30:00, 22:30:00, 23:30:00
 
-# --- VISUAL DEBUGGING ---
-# If True, the script will save the OCR region of the first processed frame
-# to help verify the TIMESTAMP_ROI.
-DEBUG_OCR = True
+# (Optional) Set to 'true' to save the black-and-white timestamp images for debugging OCR issues.
+DEBUG_OCR = false
+
 
 [FOLDER_PAIRS]
-# Define pairs of source and destination folders, separated by a comma.
-# The key (e.g., CAM01) is just a label and can be anything unique.
-# Format: LABEL = /path/to/source, /path/to/destination
-CAM01 = E:/Records/Record Plan/Ch1_CAM01, E:/Records/Record Plan/Trimmed_CAM01
-CAM02 = E:/Records/Record Plan/Ch1_CAM02, E:/Records/Record Plan/Trimmed_CAM02
+# This section maps a full input folder path to a full output folder path.
+# The backslashes in the paths must be escaped (e.g., C:\Folder\Path)
+E:\Records\Record Plan\Ch1_CAM01 = E:\Records\Record Plan\Trimmed_CAM01
+E:\Records\Record Plan\Ch1_CAM02 = E:\Records\Record Plan\Trimmed_CAM02
+

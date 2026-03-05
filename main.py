@@ -1,7 +1,6 @@
 
 import sys
 import os
-import time
 from datetime import datetime, timedelta
 import re
 import json
@@ -43,14 +42,8 @@ def load_folder_pairs(config):
     if not config.has_section('FOLDER_PAIRS'):
         print("ERROR: [FOLDER_PAIRS] section is missing.")
         sys.exit(1)
-    folders_data = {}
-    for key, value in config.items('FOLDER_PAIRS'):
-        parts = [p.strip() for p in value.split(',')]
-        if len(parts) != 2:
-            print(f"ERROR: Invalid format for '{key}' in [FOLDER_PAIRS]. Should be: 'Input/Path, Output_Folder_Name'")
-            continue
-        folders_data[os.path.normpath(parts[0])] = parts[1]
-    return folders_data
+    # The new logic: The key is the full input path, the value is the full output path.
+    return {os.path.normpath(k): os.path.normpath(v) for k, v in config.items('FOLDER_PAIRS')}
 
 def get_processed_files(db_path):
     """Loads the set of processed file paths from a JSON file."""
@@ -68,7 +61,6 @@ def add_to_processed_files(db_path, file_path):
     with open(db_path, 'w') as f:
         json.dump(list(processed), f, indent=4)
 
-# --- INSPIRED REFACTOR --- #
 def find_all_unprocessed_videos(folders_data, days_to_process, processed_files):
     """Scans all folders and returns a flat list of all unprocessed video file paths."""
     print(f"INFO: Searching for video files from the last {days_to_process} days across all folders...")
@@ -119,7 +111,7 @@ def group_videos_by_day(video_paths):
     return videos_by_day
 
 def main():
-    """Main execution function with global chronological processing."""
+    """Main execution function for a single, one-time scan."""
     config = load_configuration()
     
     # --- Configuration Loading --- #
@@ -128,7 +120,6 @@ def main():
     ocr_threshold = get_config_value(config, 'SETTINGS', 'OCR_THRESHOLD', is_int=True)
     ocr_fluctuation_seconds = get_config_value(config, 'SETTINGS', 'OCR_FLUCTUATION_SECONDS', is_int=True)
     days_to_process = get_config_value(config, 'SETTINGS', 'DAYS_TO_PROCESS', is_int=True)
-    scan_interval = get_config_value(config, 'SETTINGS', 'SCAN_INTERVAL_SECONDS', is_int=True)
     target_times = get_config_value(config, 'SETTINGS', 'TARGET_TIMES', is_list=True)
     debug_ocr = config.getboolean('SETTINGS', 'DEBUG_OCR', fallback=False)
 
@@ -142,21 +133,18 @@ def main():
 
     target_times.sort(key=time_str_to_seconds)
     
-    print("\n--- Automated Video Processing System (Global Chronological) ---")
-    print(f"Monitoring {len(folders_data)} folder pair(s). Press Ctrl+C to stop.")
+    print("\n--- Automated Video Processing System (One-Time Scan) ---")
+    print(f"Scanning {len(folders_data)} folder pair(s).")
 
     try:
-        while True:
-            print(f"\n{'='*60}\nINFO: Starting new scan at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            
-            processed_files = get_processed_files(PROCESSED_FILES_DB)
-            all_new_videos = find_all_unprocessed_videos(folders_data, days_to_process, processed_files)
+        print(f"\n{'='*60}\nINFO: Starting scan at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        processed_files = get_processed_files(PROCESSED_FILES_DB)
+        all_new_videos = find_all_unprocessed_videos(folders_data, days_to_process, processed_files)
 
-            if not all_new_videos:
-                print(f"INFO: No new videos found. Waiting for {scan_interval} seconds...")
-                time.sleep(scan_interval)
-                continue
-
+        if not all_new_videos:
+            print("INFO: No new videos found.")
+        else:
             print("INFO: New videos detected. Grouping by day for chronological processing.")
             videos_by_day = group_videos_by_day(all_new_videos)
             sorted_days = sorted(videos_by_day.keys())
@@ -164,17 +152,13 @@ def main():
             for day in sorted_days:
                 print(f"\n--- Processing Global Oldest Day: {day} ---")
                 for video_path in videos_by_day[day]:
-                    # Determine the correct output folder for this specific video
                     source_dir = os.path.normpath(os.path.dirname(video_path))
-                    output_folder_name = folders_data.get(source_dir)
+                    # The new logic: Directly get the output path from the mapping.
+                    output_folder_path = folders_data.get(source_dir)
                     
-                    if not output_folder_name:
+                    if not output_folder_path:
                         print(f"WARN: No output folder configured for source: {source_dir}. Skipping file.")
                         continue
-                    
-                    # The output folder is relative to the *parent* of the source folder (e.g. E:\Records\Local Records)
-                    parent_of_source = os.path.dirname(source_dir)
-                    output_folder_path = os.path.join(parent_of_source, output_folder_name)
 
                     if not os.path.exists(output_folder_path):
                         print(f"INFO: Creating output directory: {output_folder_path}")
@@ -195,12 +179,10 @@ def main():
             
             print("\nINFO: Finished processing all detected files.")
 
-    except KeyboardInterrupt:
-        print("\nINFO: System stopped by user.")
     except Exception as e:
         print(f"FATAL: An unexpected error occurred: {e}")
     finally:
-        print("System shut down.")
+        print("Scan complete. System shut down.")
 
 if __name__ == "__main__":
     main()
