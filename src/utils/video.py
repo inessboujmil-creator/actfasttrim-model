@@ -1,106 +1,112 @@
 
 import os
 import subprocess
-from datetime import timedelta
+import cv2
+import pytesseract
+from datetime import datetime, timedelta
 
-def get_processed_files(db_path):
-    """Reads the set of already processed filenames from the database file."""
-    if not os.path.exists(db_path):
-        return set()
-    try:
-        with open(db_path, "r") as f:
-            return set(line.strip() for line in f if line.strip())
-    except Exception as e:
-        print(f"WARNING: Could not read processed files database at {db_path}. Reason: {e}")
-        return set()
+# Ensure we are using the corrected OCR utilities
+from .ocr import get_ocr_ready_frame, parse_time_from_ocr, time_str_to_seconds
 
-def add_to_processed_files(db_path, filename):
-    """Appends a new filename to the processed files database."""
-    try:
-        with open(db_path, "a") as f:
-            f.write(filename + "\n")
-    except Exception as e:
-        print(f"ERROR: Failed to write to processed files database at {db_path}. Reason: {e}")
-
-def cleanup_processed_db(db_path, all_current_videos):
+def process_video_file(video_path, output_folder, timestamp_roi, ocr_threshold, ocr_fluctuation_seconds, target_times, debug_ocr=False):
     """
-    Cleans the processed files database by removing entries for videos
-    that no longer exist in the source folders.
+    Processes a single video file, now passing the crucial ocr_threshold to the OCR utility.
     """
-    processed_filenames = get_processed_files(db_path)
-    # Ensure all_current_videos contains only basenames for accurate comparison
-    current_basenames = {os.path.basename(f) for f in all_current_videos}
-    
-    # Determine which files are in the DB but not in the filesystem anymore
-    files_to_remove = processed_filenames - current_basenames
+    normalized_video_path = os.path.normpath(video_path)
+    cap = cv2.VideoCapture(normalized_video_path)
+    if not cap.isOpened():
+        print(f"ERROR: Could not open video file: {normalized_video_path}")
+        return
 
-    if files_to_remove:
-        print(f"INFO: Cleaning up database. Removing {len(files_to_remove)} file(s) that no longer exist.")
-        # The remaining files are the intersection
-        existing_processed_files = processed_filenames.intersection(current_basenames)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps == 0:
+        print(f"ERROR: Could not get FPS for video: {normalized_video_path}. Skipping.")
+        return
+
+    y1, y2, x1, x2 = timestamp_roi
+    processed_targets = set()
+    last_valid_time_seconds = -1
+
+    # Standard Tesseract configuration for reading segmented text like a clock
+    tesseract_config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:'
+
+    print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
+    # Debugging block to save a sample of what OCR is seeing
+    if debug_ocr:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        ret, frame = cap.read()
+        if ret:
+            roi_frame = frame[y1:y2, x1:x2]
+            cv2.imwrite("debug_ocr_frame_raw.png", roi_frame)
+            # Pass the threshold to the debug frame generation
+            processed_frame_for_debug = get_ocr_ready_frame(roi_frame, ocr_threshold)
+            cv2.imwrite("debug_ocr_frame_processed.png", processed_frame_for_debug)
+            print(f"INFO: DEBUG_OCR is True. Saved RAW and PROCESSED timestamp ROI to debug files.")
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # Reset frame position
+
+    frame_interval = int(fps)  # Check one frame per second
+    frame_num = 0
+
+    while cap.isOpened():
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        ret, frame = cap.read()
+        if not ret:
+            print("INFO: End of video file reached.")
+            break
+
+        # 1. Extract the timestamp area from the frame
+        roi_frame = frame[y1:y2, x1:x2]
+        # 2. Process the ROI to make it OCR-ready, using the new threshold
+        ocr_ready_frame = get_ocr_ready_frame(roi_frame, ocr_threshold)
+        
         try:
-            with open(db_path, "w") as f:
-                for filename in sorted(list(existing_processed_files)):
-                    f.write(filename + "\n")
-            print("INFO: Database cleanup complete.")
+            # 3. Perform OCR on the cleaned image
+            ocr_text = pytesseract.image_to_string(ocr_ready_frame, config=tesseract_config).strip()
+            current_time_str = parse_time_from_ocr(ocr_text)
+
+            if current_time_str:
+                # This is the "Intelligent Fluctuation Detection"
+                current_time_seconds = time_str_to_seconds(current_time_str)
+
+                if last_valid_time_seconds != -1 and abs(current_time_seconds - last_valid_time_seconds) > ocr_fluctuation_seconds:
+                    print(f"WARN: OCR fluctuation detected. Read '{current_time_str}' but expected near {last_valid_time_seconds}. Skipping frame.")
+                    frame_num += frame_interval
+                    continue # Skip this unreliable reading
+                
+                last_valid_time_seconds = current_time_seconds
+
+                # 4. Check if the valid time matches any of our targets
+                for target in target_times:
+                    if target == current_time_str and target not in processed_targets:
+                        print(f"INFO: Match found for {target} at frame {frame_num}!")
+                        
+                        start_time_seconds = frame_num / fps
+                        output_filename = f"{os.path.splitext(os.path.basename(normalized_video_path))[0]}_{target.replace(':', '_')}.mp4"
+                        output_path = os.path.join(output_folder, output_filename)
+                        
+                        command = [
+                            'ffmpeg', '-y', '-ss', str(start_time_seconds),
+                            '-i', normalized_video_path,
+                            '-t', '00:01:00', '-c', 'copy', output_path
+                        ]
+                        
+                        print(f"INFO: Trimming 1-minute clip for {target}...")
+                        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        
+                        print(f"SUCCESS: Saved trimmed clip to {output_path}")
+                        processed_targets.add(target)
+            
+            elif ocr_text:
+                 print(f"DEBUG: OCR found invalid text for frame #{frame_num}: '{ocr_text}'")
+
+            if len(processed_targets) == len(target_times):
+                print(f"INFO: All target times found for this video. Moving to next.")
+                break
+
         except Exception as e:
-            print(f"ERROR: Failed to write to database during cleanup. Reason: {e}")
+            print(f"ERROR: An error occurred during video processing. Details: {e}")
 
-def trim_video_clip(video_path, output_path, start_seconds, duration_seconds=60):
-    """
-    Trims a video using FFmpeg with re-encoding to ensure a high-quality output.
-    This version is optimized for robustness.
-    """
-    print(f"ACTION: Trimming '{os.path.basename(video_path)}'...")
-    print(f"  - Start Time: {timedelta(seconds=start_seconds)} ({start_seconds}s)")
-    print(f"  - Duration: {duration_seconds}s")
-    print(f"  - Output: {output_path}")
+        frame_num += frame_interval
 
-    # -hide_banner: Suppresses printing FFmpeg version and build info.
-    # -i: Input file.
-    # -ss: Seeks to the specified start time. Placing it before -i can be faster for some formats as it seeks to the nearest keyframe.
-    # -t: Specifies the duration of the clip to be extracted.
-    # -c:v libx264: Video codec - H.264. A widely compatible and high-quality codec.
-    # -preset veryfast: A good balance between encoding speed and compression.
-    # -crf 23: Constant Rate Factor. A measure of quality (lower is better). 23 is a good default.
-    # -c:a aac: Audio codec - Advanced Audio Coding. Standard for most modern applications.
-    # -b:a 128k: Audio bitrate. 128 kbps is a standard quality for stereo audio.
-    # -y: Overwrite output file without asking.
-    command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-ss", str(start_seconds),
-        "-i", video_path,
-        "-t", str(duration_seconds),
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-y",
-        output_path
-    ]
-
-    try:
-        # Using Popen for more control over output
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = process.communicate()
-
-        if process.returncode == 0:
-            print(f"SUCCESS: Clip saved to '{output_path}'.")
-        else:
-            print(f"ERROR: FFmpeg failed for '{os.path.basename(video_path)}'.")
-            print(f"  - Return Code: {process.returncode}")
-            # Print the last few lines of stderr for concise error reporting
-            error_lines = stderr.strip().split('\n')[-5:]
-            print("  - FFmpeg Error (last 5 lines):")
-            for line in error_lines:
-                print(f"    {line}")
-
-    except FileNotFoundError:
-        print("FATAL: The 'ffmpeg' command was not found.")
-        print("Please ensure FFmpeg is installed and its location is included in your system's PATH.")
-        # Exit because the core functionality of the app is missing.
-        exit()
-    except Exception as e:
-        print(f"ERROR: An unexpected error occurred during the trim process. Reason: {e}")
+    cap.release()
+    print(f"INFO: Finished processing {os.path.basename(normalized_video_path)}.")

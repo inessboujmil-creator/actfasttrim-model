@@ -2,76 +2,42 @@
 import cv2
 import pytesseract
 import re
-from datetime import datetime
+import numpy as np
 
-def extract_timestamp_from_frame(frame, roi_coords, debug=False):
+def get_ocr_ready_frame(roi_frame, threshold_value):
     """
-    Extracts a timestamp from a specific region of interest (ROI) in a video frame.
-
-    Args:
-        frame: The video frame (as a NumPy array) to process.
-        roi_coords: A list [y1, y2, x1, x2] defining the ROI.
-        debug (bool): If True, saves the processed OCR frame for inspection.
-
-    Returns:
-        A tuple containing:
-        - A datetime.time object if a valid timestamp is found, otherwise None.
-        - The raw, cleaned text extracted by OCR.
+    Converts a frame region (ROI) into a clean, black-and-white image optimized for OCR.
+    This pipeline is crucial for getting accurate text from the video frames.
     """
-    try:
-        # 1. Crop the frame to the region of interest.
-        y1, y2, x1, x2 = roi_coords
-        roi = frame[y1:y2, x1:x2]
+    # 1. Convert to Grayscale: Tesseract works best on grayscale images.
+    gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
-        # 2. Convert the ROI to grayscale for better OCR accuracy.
-        gray_frame = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    # 2. Invert Colors: If the text is white on a dark background, inverting it to black text on a white background improves recognition.
+    inverted = cv2.bitwise_not(gray)
 
-        # 3. Apply adaptive thresholding to create a binary image.
-        thresh_frame = cv2.adaptiveThreshold(
-            gray_frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 11, 2
-        )
-        
-        # --- DEBUGGING --- #
-        if debug:
-            debug_filename = 'debug_ocr_frame.png'
-            cv2.imwrite(debug_filename, thresh_frame)
-            print(f"\n--- OCR DEBUG MODE ---")
-            print(f"  - Saved the processed frame for OCR to '{debug_filename}'.")
-            print(f"  - Inspect this image to verify the ROI and image quality.")
-            print(f"  - Set DEBUG_OCR to False in config.txt for normal operation.")
-            exit() # Stop the script after saving the debug image
-            
-        # 4. Use Tesseract to extract text.
-        custom_config = r'--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789:'
-        text = pytesseract.image_to_string(thresh_frame, config=custom_config)
+    # 3. Apply Binary Thresholding: This is the most critical step.
+    # It converts the image to pure black and white, eliminating noise and compression artifacts.
+    # The 'threshold_value' is loaded from config.txt, which you can tune using find_roi_auto.py.
+    _, final_image = cv2.threshold(inverted, threshold_value, 255, cv2.THRESH_BINARY)
 
-    except pytesseract.TesseractNotFoundError:
-        print("\nFATAL: Tesseract is not installed or not in your system's PATH.")
-        print("Please ensure Tesseract is installed and the path is correct in config.txt.\n")
-        exit()
-    except Exception as e:
-        print(f"\nERROR: An unexpected error occurred during OCR image processing: {e}\n")
-        return None, ""
+    # 4. (Optional) Upscale for Clarity: Sometimes, making the image larger can help Tesseract.
+    # final_image = cv2.resize(final_image, (0, 0), fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
 
-    cleaned_text = text.strip()
-    match = re.search(r'(\d{2}:\d{2}:\d{2})', cleaned_text)
+    return final_image
 
+def parse_time_from_ocr(text):
+    """Extracts HH:MM:SS from OCR text using regex."""
+    # This regex is designed to find a pattern of two digits, a colon, two digits, a colon, and two digits.
+    match = re.search(r'(\d{2}):(\d{2}):(\d{2})', text)
     if match:
-        time_str = match.group(1)
-        try:
-            parsed_time = datetime.strptime(time_str, '%H:%M:%S').time()
-            return parsed_time, cleaned_text
-        except ValueError:
-            return None, cleaned_text
-    else:
-        return None, cleaned_text
+        return match.group(0)
+    return None
 
-def is_time_fluctuation(last_time, current_time, fluctuation_seconds):
-    today = datetime.now().date()
-    dt1 = datetime.combine(today, last_time)
-    dt2 = datetime.combine(today, current_time)
-    time_difference = abs((dt2 - dt1).total_seconds())
-    if time_difference > fluctuation_seconds and time_difference < 86300:
-        return True
-    return False
+def time_str_to_seconds(time_str):
+    """Converts a HH:MM:SS string to total seconds for easy comparison."""
+    try:
+        h, m, s = map(int, time_str.split(':'))
+        return h * 3600 + m * 60 + s
+    except (ValueError, AttributeError):
+        # Handles cases where time_str is None or malformed
+        return -1

@@ -8,8 +8,9 @@ import json
 from configparser import ConfigParser, NoSectionError, NoOptionError
 import pytesseract
 
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-from app import process_video_file, time_str_to_seconds
+# Corrected imports to use the actual project structure
+from src.utils.video import process_video_file
+from src.utils.ocr import time_str_to_seconds
 
 CONFIG_FILE = 'config.txt'
 PROCESSED_FILES_DB = 'processed_files.json'
@@ -118,6 +119,8 @@ def main():
     
     tesseract_path = get_config_value(config, 'SETTINGS', 'TESSERACT_PATH')
     timestamp_roi = get_config_value(config, 'SETTINGS', 'TIMESTAMP_ROI', is_json=True)
+    # Correctly load the OCR_THRESHOLD value
+    ocr_threshold = get_config_value(config, 'SETTINGS', 'OCR_THRESHOLD', is_int=True)
     ocr_fluctuation_seconds = get_config_value(config, 'SETTINGS', 'OCR_FLUCTUATION_SECONDS', is_int=True)
     days_to_process = get_config_value(config, 'SETTINGS', 'DAYS_TO_PROCESS', is_int=True)
     scan_interval = get_config_value(config, 'SETTINGS', 'SCAN_INTERVAL_SECONDS', is_int=True)
@@ -157,8 +160,7 @@ def main():
                 time.sleep(scan_interval)
                 continue
 
-            # --- Start processing immediately ---
-            print(f"INFO: New videos found. Starting processing immediately.")
+            print("INFO: New videos found. Starting processing immediately.")
             for day in sorted_days:
                 print(f"\n--- Processing Day: {day} ---")
                 for source_folder, output_folder_name in folders_data.items():
@@ -182,6 +184,7 @@ def main():
                             video_path=video_path,
                             output_folder=output_folder_path,
                             timestamp_roi=timestamp_roi,
+                            ocr_threshold=ocr_threshold, # Pass the threshold to the processing function
                             ocr_fluctuation_seconds=ocr_fluctuation_seconds,
                             target_times=target_times,
                             debug_ocr=debug_ocr
@@ -189,7 +192,6 @@ def main():
                         add_to_processed_files(PROCESSED_FILES_DB, video_path)
             
             print("\nINFO: All pending videos processed.")
-            # --- Only wait if no new files were found in the next iteration ---
 
     except KeyboardInterrupt:
         print("\nINFO: System stopped by user.")
