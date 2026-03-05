@@ -18,7 +18,7 @@ def time_str_to_seconds(time_str):
     h, m, s = map(int, time_str.split(':'))
     return h * 3600 + m * 60 + s
 
-def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation_seconds, target_times, ocr_threshold, debug_ocr=False):
+def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation_seconds, target_times, debug_ocr=False):
     """
     Processes a single video file to find target timestamps via OCR and trim one-minute clips.
     """
@@ -39,6 +39,8 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     last_valid_time_seconds = -1
 
     # --- Tesseract Configuration ---
+    # PSM 7: Treat the image as a single text line.
+    # Whitelist: Only look for digits and colons.
     tesseract_config = '--psm 7 -c tessedit_char_whitelist=0123456789:'
 
     print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
@@ -50,11 +52,15 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
             cv2.imwrite("debug_ocr_frame_raw.png", roi_frame)
             
             gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-            _, thresh_frame = cv2.threshold(gray_frame, ocr_threshold, 255, cv2.THRESH_BINARY_INV)
+            # Use ADAPTIVE thresholding which is more robust to lighting changes.
+            thresh_frame = cv2.adaptiveThreshold(
+                gray_frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV, 11, 2
+            )
             
             debug_filename = "debug_ocr_frame_processed.png"
             cv2.imwrite(debug_filename, thresh_frame)
-            print(f"INFO: DEBUG_OCR is True. Saved RAW and PROCESSED timestamp ROI to debug files (Threshold: {ocr_threshold}).")
+            print(f"INFO: DEBUG_OCR is True. Saved RAW and PROCESSED timestamp ROI to debug files.")
 
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
@@ -71,7 +77,11 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
         roi_frame = frame[y1:y2, x1:x2]
         
         gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-        _, ocr_ready_frame = cv2.threshold(gray_frame, ocr_threshold, 255, cv2.THRESH_BINARY_INV)
+        # Use ADAPTIVE thresholding which is more robust to lighting changes.
+        ocr_ready_frame = cv2.adaptiveThreshold(
+            gray_frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, 11, 2
+        )
         
         try:
             ocr_text = pytesseract.image_to_string(ocr_ready_frame, config=tesseract_config).strip()

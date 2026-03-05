@@ -115,7 +115,6 @@ def main():
     tesseract_path = get_config_value(config, 'SETTINGS', 'TESSERACT_PATH')
     timestamp_roi = get_config_value(config, 'SETTINGS', 'TIMESTAMP_ROI', is_json=True)
     ocr_fluctuation_seconds = get_config_value(config, 'SETTINGS', 'OCR_FLUCTUATION_SECONDS', is_int=True)
-    ocr_threshold = get_config_value(config, 'SETTINGS', 'OCR_THRESHOLD_VALUE', is_int=True)
     days_to_process = get_config_value(config, 'SETTINGS', 'DAYS_TO_PROCESS', is_int=True)
     scan_interval = get_config_value(config, 'SETTINGS', 'SCAN_INTERVAL_SECONDS', is_int=True)
     target_times = get_config_value(config, 'SETTINGS', 'TARGET_TIMES', is_list=True)
@@ -179,8 +178,7 @@ def main():
                             timestamp_roi=timestamp_roi,
                             ocr_fluctuation_seconds=ocr_fluctuation_seconds,
                             target_times=target_times,
-                            debug_ocr=debug_ocr,
-                            ocr_threshold=ocr_threshold
+                            debug_ocr=debug_ocr
                         )
                         add_to_processed_files(PROCESSED_FILES_DB, video_path)
 
