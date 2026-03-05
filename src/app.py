@@ -24,20 +24,10 @@ def get_ocr_ready_frame(roi_frame):
     The final, correct, and robust image processing pipeline.
     This focuses on the three pillars of successful OCR: Contrast, Scale, and Binarization.
     """
-    # 1. Convert to grayscale
     gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-
-    # 2. Invert the image. Tesseract performs best with black text on a white background.
     inverted = cv2.bitwise_not(gray)
-
-    # 3. Upscale the image significantly (4x) using Lanczos interpolation, which provides
-    # superior quality for upscaling and results in sharper text for the OCR engine.
     upscaled = cv2.resize(inverted, (0, 0), fx=4, fy=4, interpolation=cv2.INTER_LANCZOS4)
-
-    # 4. Apply Otsu's thresholding. This is the most reliable method for automatic
-    # binarization on a high-contrast, upscaled image like this one.
     _, final_image = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
     return final_image
 
 def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation_seconds, target_times, debug_ocr=False):
@@ -45,7 +35,6 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     Processes a single video file to find target timestamps via OCR and trim one-minute clips.
     """
     normalized_video_path = os.path.normpath(video_path)
-
     cap = cv2.VideoCapture(normalized_video_path)
     if not cap.isOpened():
         print(f"ERROR: Could not open video file: {normalized_video_path}")
@@ -60,7 +49,6 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     processed_targets = set()
     last_valid_time_seconds = -1
 
-    # --- Tesseract Configuration (Final) ---
     tesseract_config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:'
 
     print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
@@ -73,7 +61,7 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
             processed_frame_for_debug = get_ocr_ready_frame(roi_frame)
             cv2.imwrite("debug_ocr_frame_processed.png", processed_frame_for_debug)
             print(f"INFO: DEBUG_OCR is True. Saved RAW and PROCESSED timestamp ROI to debug files.")
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # Reset frame position
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     frame_interval = int(fps)
     frame_num = 0
@@ -101,7 +89,6 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
                 current_time_seconds = time_str_to_seconds(current_time_str)
 
                 if last_valid_time_seconds != -1 and abs(current_time_seconds - last_valid_time_seconds) > ocr_fluctuation_seconds:
-                    print(f"WARN: OCR fluctuation detected. Read: {current_time_str}, Last Valid: {timedelta(seconds=last_valid_time_seconds)}. Skipping frame.")
                     frame_num += frame_interval
                     continue
                 
@@ -112,7 +99,7 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
                         print(f"INFO: Match found for {target} at frame {frame_num}!")
                         
                         start_time_seconds = frame_num / fps
-                        output_filename = f"{os.path.splitext(os.path.basename(normalized_video_path))[0]}_{target.replace(':', '_')}.avi"
+                        output_filename = f"{os.path.splitext(os.path.basename(normalized_video_path))[0]}_{target.replace(':', '_')}.mp4"
                         output_path = os.path.join(output_folder, output_filename)
                         
                         command = [
