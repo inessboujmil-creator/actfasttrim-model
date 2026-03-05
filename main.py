@@ -1,171 +1,200 @@
 
-import configparser
+import sys
 import os
 import time
-import traceback
 from datetime import datetime, timedelta
-from collections import defaultdict
 import re
+import json
+from configparser import ConfigParser, NoSectionError, NoOptionError
 
-from src.app import process_video_file
-from src.utils.video import get_processed_files, add_to_processed_files
+# Assuming src/app.py is in the src directory
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+from app import process_video_file, time_str_to_seconds
 
 # --- Constants ---
 CONFIG_FILE = 'config.txt'
-PROCESSED_FILES_DB = 'processed_files.txt'
+PROCESSED_FILES_DB = 'processed_files.json'
 
 def load_configuration():
-    """
-    Loads settings from config.txt, handling potential Windows path issues.
-    """
+    """Loads settings from the config file."""
     if not os.path.exists(CONFIG_FILE):
-        raise FileNotFoundError(f"FATAL: Configuration file '{CONFIG_FILE}' not found.")
+        print(f"ERROR: Configuration file '{CONFIG_FILE}' not found.")
+        sys.exit(1)
 
     print(f"INFO: Loading configuration from: {os.path.abspath(CONFIG_FILE)}")
-    config = configparser.ConfigParser(delimiters=('='))
+    config = ConfigParser()
     config.read(CONFIG_FILE)
     return config
 
-def get_day_from_filename(filename):
-    """
-    Extracts the date (e.g., '20260205') from a filename using regex.
-    """
-    match = re.search(r'(\d{8})', filename)
-    return match.group(1) if match else None
+def get_config_value(config, section, option, is_json=False, is_list=False, is_int=False):
+    """Safely gets a value from the config parser."""
+    try:
+        value = config.get(section, option)
+        if is_json:
+            return json.loads(value)
+        if is_list:
+            return [item.strip() for item in value.split(',')]
+        if is_int:
+            return int(value)
+        return value
+    except (NoSectionError, NoOptionError):
+        print(f"ERROR: '{option}' not found in section '[{section}]' of the config file.")
+        sys.exit(1)
+    except json.JSONDecodeError:
+        print(f"ERROR: Could not parse JSON value for '{option}' in section '[{section}]'.")
+        sys.exit(1)
 
-def find_unprocessed_videos_grouped_by_day(config, already_processed):
-    """
-    Scans source folders and groups unprocessed videos by day, returning a sorted dictionary.
-    """
-    folder_pairs = config['FOLDER_PAIRS']
-    days_to_process = config.getint('SETTINGS', 'DAYS_TO_PROCESS', fallback=7)
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days_to_process)
-    
-    videos_by_day = defaultdict(lambda: defaultdict(list))
+def get_processed_files(db_path):
+    """Loads the set of processed file paths from a JSON file."""
+    if not os.path.exists(db_path):
+        return set()
+    with open(db_path, 'r') as f:
+        try:
+            return set(json.load(f))
+        except json.JSONDecodeError:
+            return set()
 
+def add_to_processed_files(db_path, file_path):
+    """Adds a file path to the processed files database."""
+    processed = get_processed_files(db_path)
+    processed.add(file_path)
+    with open(db_path, 'w') as f:
+        json.dump(list(processed), f, indent=4)
+
+def find_unprocessed_videos_grouped_by_day(folders_data, days_to_process, processed_files):
+    """Scans folders, finds unprocessed videos, and groups them by day."""
     print(f"INFO: Searching for video files from the last {days_to_process} days...")
+    videos_by_day = {}
+    today = datetime.now()
+    date_limit = today - timedelta(days=days_to_process)
 
-    for src_folder, _ in folder_pairs.items():
-        src_folder = src_folder.strip()
-        if not os.path.isdir(src_folder):
-            print(f"ERROR: Source folder not found: {src_folder}")
+    for source_folder, _ in folders_data.items():
+        print(f"INFO: Scanning folder: {source_folder}")
+        if not os.path.isdir(source_folder):
+            print(f"WARN: Source folder not found: {source_folder}")
             continue
         
-        print(f"INFO: Scanning folder: {src_folder}")
-        for filename in os.listdir(src_folder):
-            if filename.lower().endswith(".mp4") and filename not in already_processed:
-                day_str = get_day_from_filename(filename)
-                if not day_str:
-                    continue
+        for filename in os.listdir(source_folder):
+            if not filename.lower().endswith('.mp4'):
+                continue
 
-                file_path = os.path.join(src_folder, filename)
-                try:
-                    file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
-                    if start_date <= file_mod_time <= end_date:
-                        videos_by_day[day_str][src_folder].append(file_path)
-                except Exception as e:
-                    print(f"WARN: Could not process file info for {filename}. Reason: {e}")
+            video_path = os.path.join(source_folder, filename)
+            if video_path in processed_files:
+                continue
 
-    # Sort the days chronologically and then sort the files within each folder
-    sorted_days = sorted(videos_by_day.keys())
-    sorted_videos_by_day = {day: videos_by_day[day] for day in sorted_days}
-    for day in sorted_videos_by_day:
-        for folder in sorted_videos_by_day[day]:
-            sorted_videos_by_day[day][folder].sort()
+            # Extract date from filename (e.g., '...20240305...')
+            match = re.search(r'(\d{8})', filename)
+            if not match:
+                continue
             
-    return sorted_videos_by_day
+            day_str = match.group(1)
+            try:
+                video_date = datetime.strptime(day_str, '%Y%m%d')
+                if video_date >= date_limit:
+                    if day_str not in videos_by_day:
+                        videos_by_day[day_str] = []
+                    videos_by_day[day_str].append(video_path)
+            except ValueError:
+                continue
+    
+    # Sort the videos within each day chronologically by filename
+    for day in videos_by_day:
+        videos_by_day[day].sort()
+
+    found_count = sum(len(v) for v in videos_by_day.values())
+    day_count = len(videos_by_day)
+    print(f"INFO: Found {found_count} new video file(s) across {day_count} day(s).")
+
+    return videos_by_day
 
 def main():
-    """
-    Main loop to orchestrate the turn-based, chronological processing of videos.
-    """
+    """Main execution function."""
     config = load_configuration()
     
-    tesseract_path = config.get('SETTINGS', 'TESSERACT_PATH', fallback='').strip()
-    if tesseract_path and os.path.exists(tesseract_path):
-        import pytesseract
+    # Load settings
+    tesseract_path = get_config_value(config, 'SETTINGS', 'TESSERACT_PATH')
+    timestamp_roi = get_config_value(config, 'SETTINGS', 'TIMESTAMP_ROI', is_json=True)
+    ocr_fluctuation_seconds = get_config_value(config, 'SETTINGS', 'OCR_FLUCTUATION_SECONDS', is_int=True)
+    ocr_threshold = get_config_value(config, 'SETTINGS', 'OCR_THRESHOLD_VALUE', is_int=True)
+    days_to_process = get_config_value(config, 'SETTINGS', 'DAYS_TO_PROCESS', is_int=True)
+    scan_interval = get_config_value(config, 'SETTINGS', 'SCAN_INTERVAL_SECONDS', is_int=True)
+    target_times = get_config_value(config, 'SETTINGS', 'TARGET_TIMES', is_list=True)
+    debug_ocr = config.getboolean('SETTINGS', 'DEBUG_OCR')
+
+    # Set Tesseract command path
+    if os.path.exists(tesseract_path):
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
         print("INFO: Tesseract command path loaded successfully.")
     else:
-        print("WARNING: Tesseract path not set or invalid. OCR will not be available.")
+        print(f"WARNING: Tesseract path not set or invalid. OCR will not be available.")
 
-    timestamp_roi = eval(config.get('SETTINGS', 'TIMESTAMP_ROI', fallback='[0,0,0,0]'))
-    fluctuation_seconds = config.getint('SETTINGS', 'OCR_FLUCTUATION_SECONDS', fallback=300)
-    scan_interval = config.getint('SETTINGS', 'SCAN_INTERVAL_SECONDS', fallback=300)
-    debug_ocr = config.getboolean('SETTINGS', 'DEBUG_OCR', fallback=False)
-    
-    target_times_str = config.get('SETTINGS', 'TARGET_TIMES', fallback='')
-    target_times = [t.strip() for t in target_times_str.split(',')]
-    
-    folder_pairs = {k.strip(): v.strip() for k, v in config['FOLDER_PAIRS'].items()}
+    # Load folder pairs
+    try:
+        folders_data = {key.upper(): val for key, val in config.items('FOLDER_PAIRS')}
+    except (NoSectionError, NoOptionError):
+        print("ERROR: [FOLDER_PAIRS] section is missing or empty in the config file.")
+        sys.exit(1)
+
+    # Sort target times chronologically
+    target_times.sort(key=time_str_to_seconds)
     
     print("\n--- Automated Video Processing System ---")
-    print(f"Monitoring {len(folder_pairs)} folder pair(s).")
+    print(f"Monitoring {len(folders_data)} folder pair(s).")
     print(f"Scan Interval: {scan_interval} seconds.")
     print(f"Target Times: {target_times}")
     print("System started. Press Ctrl+C to stop.")
 
     try:
         while True:
-            print("\n" + "="*50)
+            print("\n==================================================")
             print(f"INFO: Starting new scan at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
-            already_processed = get_processed_files(PROCESSED_FILES_DB)
-            videos_by_day = find_unprocessed_videos_grouped_by_day(config, already_processed)
-            
-            if not videos_by_day:
-                print("INFO: No new video files to process.")
-            else:
-                total_videos = sum(len(files) for day_data in videos_by_day.values() for files in day_data.values())
-                print(f"INFO: Found {total_videos} new video file(s) across {len(videos_by_day)} day(s).")
-                
-                # Process day by day, oldest first
-                for day, folders_data in videos_by_day.items():
-                    print(f"\n--- Processing Day: {day} ---")
+            processed_files = get_processed_files(PROCESSED_FILES_DB)
+            videos_by_day = find_unprocessed_videos_grouped_by_day(folders_data, days_to_process, processed_files)
+            sorted_days = sorted(videos_by_day.keys())
+
+            if not sorted_days:
+                time.sleep(scan_interval)
+                continue
+
+            # Process videos day by day, alternating between folders
+            for day in sorted_days:
+                print(f"\n--- Processing Day: {day} ---")
+                for source_folder, output_folder in folders_data.items():
+                    videos_in_folder_for_day = [v for v in videos_by_day[day] if v.startswith(source_folder)]
+                    if not videos_in_folder_for_day:
+                        continue
+
+                    print(f"--- Folder: {source_folder} ---")
+                    if not os.path.exists(output_folder):
+                        print(f"INFO: Creating output directory: {output_folder}")
+                        os.makedirs(output_folder)
                     
-                    # Process folder by folder within the day
-                    for folder, video_list in folders_data.items():
-                        print(f"--- Folder: {folder} ---")
-                        for video_path in video_list:
-                            filename = os.path.basename(video_path)
-                            output_folder = folder_pairs.get(folder)
+                    for video_path in videos_in_folder_for_day:
+                        print("\n--- Processing Video ---")
+                        print(f"  - Source: {video_path}")
+                        process_video_file(
+                            video_path=video_path,
+                            output_folder=output_folder,
+                            timestamp_roi=timestamp_roi,
+                            ocr_fluctuation_seconds=ocr_fluctuation_seconds,
+                            target_times=target_times,
+                            debug_ocr=debug_ocr,
+                            ocr_threshold=ocr_threshold
+                        )
+                        add_to_processed_files(PROCESSED_FILES_DB, video_path)
 
-                            if not output_folder:
-                                print(f"ERROR: No output folder configured for {folder}. Skipping.")
-                                continue
-                            
-                            os.makedirs(output_folder, exist_ok=True)
-                            
-                            print(f"\n--- Processing Video ---")
-                            print(f"  - Source: {video_path}")
-                            
-                            try:
-                                process_video_file(
-                                    video_path=video_path,
-                                    output_folder=output_folder,
-                                    timestamp_roi=timestamp_roi,
-                                    ocr_fluctuation_seconds=fluctuation_seconds,
-                                    target_times=target_times,
-                                    debug_ocr=debug_ocr
-                                )
-                                add_to_processed_files(PROCESSED_FILES_DB, filename)
-                                print(f"INFO: Successfully processed and logged {filename}.")
-
-                            except Exception:
-                                print(f"\nFATAL ERROR during video processing: {filename}")
-                                traceback.print_exc()
-                                with open("error_log.txt", "a") as f:
-                                    f.write(f"{datetime.now()}: {filename} - {traceback.format_exc()}\n")
-            
-            print(f"\nINFO: Scan complete. Waiting for {scan_interval} seconds.")
+            print(f"\nINFO: Scan complete. Waiting for {scan_interval} seconds...")
             time.sleep(scan_interval)
 
     except KeyboardInterrupt:
         print("\nINFO: System stopped by user.")
-    except Exception:
-        print("\nFATAL: An unexpected error occurred in the main loop.")
-        traceback.print_exc()
+    except Exception as e:
+        print(f"FATAL: An unexpected error occurred: {e}")
+    finally:
+        print("System shut down.")
 
 if __name__ == "__main__":
+    # This is required for pytesseract to be imported correctly from the app module
+    from pytesseract import pytesseract
     main()
