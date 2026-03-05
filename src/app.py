@@ -22,7 +22,6 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     """
     Processes a single video file to find target timestamps via OCR and trim one-minute clips.
     """
-    # Normalize the path to be safe for external tools
     normalized_video_path = os.path.normpath(video_path)
 
     cap = cv2.VideoCapture(normalized_video_path)
@@ -39,18 +38,32 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     processed_targets = set()
     last_valid_time_seconds = -1
 
+    # --- Tesseract Configuration ---
+    # PSM 7: Treat the image as a single text line.
+    # Whitelist: Only look for digits and colons.
+    tesseract_config = '--psm 7 -c tessedit_char_whitelist=0123456789:'
+
     print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
     if debug_ocr:
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         ret, frame = cap.read()
         if ret:
             roi_frame = frame[y1:y2, x1:x2]
-            debug_filename = "debug_ocr_frame.png"
-            cv2.imwrite(debug_filename, roi_frame)
-            print(f"INFO: DEBUG_OCR is True. Saved timestamp ROI of first frame to {debug_filename}")
+            # Save the raw ROI for comparison
+            cv2.imwrite("debug_ocr_frame_raw.png", roi_frame)
+            
+            # --- Apply Pre-processing for Debug Frame ---
+            gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+            # Apply thresholding to get a black and white image
+            _, thresh_frame = cv2.threshold(gray_frame, 170, 255, cv2.THRESH_BINARY_INV)
+            
+            debug_filename = "debug_ocr_frame_processed.png"
+            cv2.imwrite(debug_filename, thresh_frame)
+            print(f"INFO: DEBUG_OCR is True. Saved RAW and PROCESSED timestamp ROI to debug files.")
+
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    frame_interval = int(fps)  # Analyze one frame per second
+    frame_interval = int(fps)
     frame_num = 0
 
     while cap.isOpened():
@@ -60,12 +73,16 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
             print("INFO: End of video file reached.")
             break
 
-        print(f"DEBUG: Analyzing frame #{frame_num}...")
         roi_frame = frame[y1:y2, x1:x2]
+        
+        # --- Image Pre-processing for OCR ---
         gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+        # Use thresholding to create a high-contrast, binary image.
+        # The value 170 is a good starting point but may need tuning.
+        _, ocr_ready_frame = cv2.threshold(gray_frame, 170, 255, cv2.THRESH_BINARY_INV)
         
         try:
-            ocr_text = pytesseract.image_to_string(gray_frame, config='--psm 6').strip()
+            ocr_text = pytesseract.image_to_string(ocr_ready_frame, config=tesseract_config).strip()
             
             if ocr_text:
                 print(f"DEBUG: Raw OCR output for frame #{frame_num}: '{ocr_text}'")
