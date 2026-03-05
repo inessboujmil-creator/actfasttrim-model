@@ -2,6 +2,7 @@
 import os
 import time
 import cv2
+import ast
 
 from src.utils.video import (
     cleanup_processed_db,
@@ -16,66 +17,92 @@ from src.utils.ocr import (
 
 class VideoProcessor:
     def __init__(self):
-        # --- Start of config.txt Loading ---
-        project_root = os.getcwd()
-        config_path = os.path.join(project_root, 'config.txt')
-        print(f"DEBUG: Attempting to load config from: {config_path}")
+        # --- Configuration Initialization ---
+        self.folder_configs = []
+        self.tesseract_cmd = None
+        self.scan_interval = 60
+        self.timestamp_roi = [10, 50, 1100, 1280]
+        self.ocr_fluctuation_seconds = 10
+        self.processed_files_db = "processed_files.txt"
 
-        try:
-            with open(config_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#') and '=' in line:
-                        key, value = line.split('=', 1)
-                        key = key.strip()
-                        # Strip whitespace and then strip any surrounding quotes
-                        value = value.strip().strip('"')
-                        if key == "TESSERACT_CMD":
-                            os.environ[key] = value
-                            print(f"DEBUG: Successfully set TESSERACT_CMD from config.txt.")
-                            break
-        except FileNotFoundError:
-            print(f"ERROR: The config.txt file was not found at {config_path}")
-            print("FATAL: Please ensure the config.txt file exists in the same directory as main.py")
-        except Exception as e:
-            print(f"ERROR: Could not parse config.txt file. Reason: {e}")
-        # --- End of config.txt Loading ---
+        self._load_config()
 
-        self.folder_configs = [
-            {"input": r"E:\Records\Local Records\Ch1_CAM01", "output": r"E:\Records\Local Records\Trimmed_Cam01"},
-            {"input": r"E:\Records\Local Records\Ch1_CAM02", "output": r"E:\Records\Local Records\Trimmed_Cam02"}
-        ]
-
+        # --- Post-config setup ---
         self.cam_folders = [config["input"] for config in self.folder_configs]
-        self.processed_files_db = os.getenv("PROCESSED_FILES_DB", "processed_files.txt")
-        self.scan_interval = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
-        
-        self.tesseract_cmd = os.getenv("TESSERACT_CMD")
-        print(f"DEBUG: Tesseract command path from os.getenv: {self.tesseract_cmd}")
-        
+
         if self.tesseract_cmd:
             import pytesseract
             pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
             print("INFO: Tesseract command path loaded successfully. OCR is active.")
         else:
-            print("WARNING: Tesseract path not loaded. OCR will fail.")
+            print("WARNING: Tesseract path not set in config.txt. OCR will likely fail if Tesseract is not in the system's PATH.")
 
         self.target_times = [
             "00:30:00", "01:30:00", "02:30:00", "03:30:00", "04:30:00", "05:30:00",
             "06:30:00", "08:30:00", "09:45:00", "10:45:00", "13:00:00", "14:00:00",
             "16:00:00", "17:45:00", "20:30:00", "21:30:00", "22:30:00", "23:30:00"
         ]
-        self.timestamp_roi = [10, 50, 1100, 1280]
-        self.ocr_fluctuation_seconds = 5
+
+    def _load_config(self):
+        """Loads configuration from config.txt."""
+        project_root = os.getcwd()
+        config_path = os.path.join(project_root, 'config.txt')
+        print(f"INFO: Loading configuration from: {config_path}")
+
+        try:
+            with open(config_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip().strip('"')
+
+                    if key == "TESSERACT_CMD":
+                        self.tesseract_cmd = value
+                        print(f"  - Loaded TESSERACT_CMD: {value}")
+                    elif key == "SCAN_INTERVAL_SECONDS":
+                        self.scan_interval = int(value)
+                        print(f"  - Loaded SCAN_INTERVAL_SECONDS: {value}")
+                    elif key == "TIMESTAMP_ROI":
+                        self.timestamp_roi = ast.literal_eval(value)
+                        print(f"  - Loaded TIMESTAMP_ROI: {value}")
+                    elif key == "OCR_FLUCTUATION_SECONDS":
+                        self.ocr_fluctuation_seconds = int(value)
+                        print(f"  - Loaded OCR_FLUCTUATION_SECONDS: {value}")
+                    elif key == "FOLDER_CONFIG":
+                        if '|' in value:
+                            input_path, output_path = [p.strip().strip('"') for p in value.split('|', 1)]
+                            if os.path.isdir(input_path):
+                                self.folder_configs.append({"input": input_path, "output": output_path})
+                                print(f"  - Loaded FOLDER_CONFIG: {input_path} -> {output_path}")
+                            else:
+                                print(f"  - WARNING: Input folder does not exist, skipping: {input_path}")
+                        else:
+                            print(f"  - WARNING: Invalid FOLDER_CONFIG format: {value}")
+
+        except FileNotFoundError:
+            print(f"FATAL: The config.txt file was not found at {config_path}")
+            print("Please ensure the config.txt file exists and is configured correctly.")
+            exit()
+        except Exception as e:
+            print(f"FATAL: Could not parse config.txt file. Reason: {e}")
+            exit()
+            
+        if not self.folder_configs:
+            print("FATAL: No valid FOLDER_CONFIG entries found in config.txt. The program cannot continue.")
+            exit()
 
     def run(self):
-        print("--- Automated Video Processing System ---")
-        print(f"Monitoring folders: {", ".join(self.cam_folders)}")
+        print("\n--- Automated Video Processing System ---")
+        print(f"Monitoring folders: {', '.join(self.cam_folders)}")
         print("System started. Press Ctrl+C to stop.")
 
         while True:
             try:
-                print("\nINFO: Scanning all folders for new files...")
+                print(f"\nINFO: Scanning all folders for new files... (Interval: {self.scan_interval}s)")
                 
                 unprocessed_by_folder_and_day = {}
                 all_current_filenames = set()
@@ -87,15 +114,16 @@ class VideoProcessor:
                     try:
                         for filename in os.listdir(folder_path):
                             if filename.lower().endswith((".avi", ".mp4", ".mov")):
+                                full_path = os.path.join(folder_path, filename)
                                 all_current_filenames.add(filename)
                                 if filename not in processed_files:
                                     day_str = filename[:8]
                                     if day_str.isdigit() and len(day_str) == 8:
                                         if day_str not in files_in_folder_by_day:
                                             files_in_folder_by_day[day_str] = []
-                                        files_in_folder_by_day[day_str].append(os.path.join(folder_path, filename))
+                                        files_in_folder_by_day[day_str].append(full_path)
                     except FileNotFoundError:
-                        print(f"WARNING: Folder not found: {folder_path}. Skipping.")
+                        print(f"WARNING: Folder not found during scan: {folder_path}. Skipping.")
                         continue
                     
                     if files_in_folder_by_day:
@@ -109,29 +137,34 @@ class VideoProcessor:
                     print(f"INFO: Found new files to process in {len(unprocessed_by_folder_and_day)} folder(s).")
 
                 turn_index = 0
-                while unprocessed_by_folder_and_day:
+                processed_a_day = True
+                while processed_a_day:
+                    processed_a_day = False
                     try:
                         oldest_day_global = min(day for folder_days in unprocessed_by_folder_and_day.values() for day in folder_days.keys())
                     except ValueError:
-                        break 
+                        break
 
                     print(f"\n--- Processing oldest day found: {oldest_day_global} ---")
                     
-                    folder_to_process = self.folder_configs[turn_index]["input"]
+                    for i in range(len(self.folder_configs)):
+                        folder_to_process = self.folder_configs[turn_index]["input"]
 
-                    if folder_to_process in unprocessed_by_folder_and_day and oldest_day_global in unprocessed_by_folder_and_day[folder_to_process]:
-                        files_for_day = unprocessed_by_folder_and_day[folder_to_process][oldest_day_global]
-                        print(f"-> Turn for '{os.path.basename(folder_to_process)}': Processing {len(files_for_day)} file(s).")
+                        if folder_to_process in unprocessed_by_folder_and_day and oldest_day_global in unprocessed_by_folder_and_day[folder_to_process]:
+                            files_for_day = sorted(unprocessed_by_folder_and_day[folder_to_process][oldest_day_global])
+                            print(f"-> Turn for '{os.path.basename(folder_to_process)}': Processing {len(files_for_day)} file(s) for day {oldest_day_global}.")
 
-                        for video_path in sorted(files_for_day):
-                            self._process_single_video(video_path)
+                            for video_path in files_for_day:
+                                self._process_single_video(video_path)
 
-                        del unprocessed_by_folder_and_day[folder_to_process][oldest_day_global]
-                        if not unprocessed_by_folder_and_day[folder_to_process]:
-                            del unprocessed_by_folder_and_day[folder_to_process]
-                    
-                    turn_index = (turn_index + 1) % len(self.folder_configs)
-                
+                            del unprocessed_by_folder_and_day[folder_to_process][oldest_day_global]
+                            if not unprocessed_by_folder_and_day[folder_to_process]:
+                                del unprocessed_by_folder_and_day[folder_to_process]
+                            
+                            processed_a_day = True
+                        
+                        turn_index = (turn_index + 1) % len(self.folder_configs)
+
                 print(f"\nINFO: Scan cycle complete. Waiting for {self.scan_interval} seconds...")
                 time.sleep(self.scan_interval)
 
@@ -140,6 +173,7 @@ class VideoProcessor:
                 break
             except Exception as e:
                 print(f"An unexpected error occurred in the main loop: {e}")
+                print("Continuing after a 20-second delay...")
                 time.sleep(20)
 
     def _process_single_video(self, video_path):
@@ -149,13 +183,13 @@ class VideoProcessor:
             print(f"WARNING: No folder configuration found for {video_path}. Skipping.")
             return
 
-        print(f"\nPROCESSING: '{filename}' in '{os.path.basename(folder_info['input'])}'")
-        print("_______________________________________")
-
+        print(f"\nPROCESSING: '{filename}'")
+        
         try:
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
                 print(f"ERROR: Could not open video file: {video_path}")
+                add_to_processed_files(self.processed_files_db, filename)
                 return
 
             found_times_in_video = set()
@@ -167,19 +201,20 @@ class VideoProcessor:
                 ret, frame = cap.read()
                 if not ret:
                     break
+                
+                frame_pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
 
-                frame_count += 1
-                if frame_count % frame_skip != 0:
+                if frame_pos % frame_skip != 0:
                     continue
 
                 current_pos_sec = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
                 ocr_time = extract_timestamp_from_frame(frame, self.timestamp_roi)
 
                 if ocr_time:
-                    print(f"  {ocr_time.strftime('%H:%M:%S')}", flush=True)
+                    print(f"  - OCR Time: {ocr_time.strftime('%H:%M:%S')} (Video Time: {int(current_pos_sec)}s)", end='\r', flush=True)
 
                     if last_ocr_time and is_time_fluctuation(last_ocr_time, ocr_time, self.ocr_fluctuation_seconds):
-                        print(f"  >> WARNING: Time fluctuation detected. Skipping check for this frame to prevent false match.")
+                        print(f"\n  >> WARNING: Fluctuation detected ({last_ocr_time.strftime('%H:%M:%S')} -> {ocr_time.strftime('%H:%M:%S')}). Skipping check.")
                         last_ocr_time = ocr_time 
                         continue 
 
@@ -187,25 +222,22 @@ class VideoProcessor:
                     timestamp_str = ocr_time.strftime('%H:%M:%S')
 
                     if timestamp_str in self.target_times and timestamp_str not in found_times_in_video:
-                        print(f"  >> SUCCESS: Match found for target time '{timestamp_str}'! <<")
+                        print(f"\n  >> SUCCESS: Match found for target time '{timestamp_str}'! <<")
                         
                         match_second = (ocr_time.hour * 3600) + (ocr_time.minute * 60) + ocr_time.second
                         output_filename = f"{os.path.splitext(filename)[0]}_trimmed_{timestamp_str.replace(':', '')}.avi"
                         output_path = os.path.join(folder_info["output"], output_filename)
 
-                        if not os.path.exists(folder_info["output"]):
-                            os.makedirs(folder_info["output"])
+                        os.makedirs(folder_info["output"], exist_ok=True)
                         
                         print(f"  >> ACTION: Initializing trim to '{output_path}'...")
                         trim_video_clip(video_path, output_path, start_seconds=match_second)
                         found_times_in_video.add(timestamp_str)
-                else:
-                    # This message will now only appear if OCR genuinely fails to read a timestamp
-                    print(f"  -> OCR scan at video time: {int(current_pos_sec)}s... (No valid timestamp detected)", flush=True)
-            
+
             cap.release()
+            print(f"\nFINISHED: '{filename}'. Found {len(found_times_in_video)} match(es).")
             add_to_processed_files(self.processed_files_db, filename)
-            print(f"FINISHED: '{filename}'. Found {len(found_times_in_video)} target(s).")
 
         except Exception as e:
-            print(f"ERROR: Failed to process {filename}. Reason: {e}")
+            print(f"\nERROR: An unexpected error occurred while processing {filename}. Reason: {e}")
+            add_to_processed_files(self.processed_files_db, os.path.basename(video_path))

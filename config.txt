@@ -1,1 +1,36 @@
-TESSERACT_CMD = "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+# -----------------------------------------------------------------------------
+# Tesseract OCR Configuration
+# -----------------------------------------------------------------------------
+# Provide the full path to the Tesseract executable if it's not in the system's PATH.
+# Example for Windows: C:\Program Files\Tesseract-OCR\tesseract.exe
+# Example for Linux/macOS: /usr/local/bin/tesseract
+TESSERACT_CMD = "C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# -----------------------------------------------------------------------------
+# Folder Configuration
+# -----------------------------------------------------------------------------
+# Define the folders to monitor. Add one line per folder pair.
+# The format is: FOLDER_CONFIG = "path/to/input/folder" | "path/to/output/folder"
+# Use absolute paths. Double backslashes (\\) are recommended for Windows paths.
+#
+# Example:
+# FOLDER_CONFIG = "E:\\Records\\Local Records\\Ch1_CAM01" | "E:\\Records\\Local Records\\Trimmed_Cam01"
+# FOLDER_CONFIG = "E:\\Records\\Local Records\\Ch1_CAM02" | "E:\\Records\\Local Records\\Trimmed_Cam02"
+#
+FOLDER_CONFIG = "E:\\Records\\Local Records\\Ch1_CAM01" | "E:\\Records\\Local Records\\Trimmed_Cam01"
+FOLDER_CONFIG = "E:\\Records\\Local Records\\Ch1_CAM02" | "E:\\Records\\Local Records\\Trimmed_Cam02"
+
+
+# -----------------------------------------------------------------------------
+# Processing Configuration
+# -----------------------------------------------------------------------------
+# Time in seconds to wait between scanning folders for new files.
+SCAN_INTERVAL_SECONDS = 60
+
+# Region of Interest (ROI) for OCR timestamp detection.
+# Format: [y_start, y_end, x_start, x_end]
+TIMESTAMP_ROI = [10, 50, 1100, 1280]
+
+# Time in seconds to define a significant, unexpected jump forward in video time.
+# This helps reject OCR errors (e.g., 01:00:00 -> 05:00:00).
+OCR_FLUCTUATION_SECONDS = 10
