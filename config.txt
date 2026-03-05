@@ -6,10 +6,10 @@ TESSERACT_PATH = C:\Program Files\Tesseract-OCR\tesseract.exe
 
 # The region of the video frame where the timestamp is located.
 # Format is a JSON array: [y_start, y_end, x_start, x_end]
-TIMESTAMP_ROI = [20, 40, 610, 710]
+TIMESTAMP_ROI = [0, 307, 2150, 3072]
 
 # The grayscale threshold (0-255) for converting the timestamp to pure black and white.
-OCR_THRESHOLD = 190
+OCR_THRESHOLD = 121
 
 # The maximum number of seconds allowed for the OCR time to jump forward.
 OCR_FLUCTUATION_SECONDS = 300
