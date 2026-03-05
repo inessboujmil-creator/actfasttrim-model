@@ -1,99 +1,112 @@
 
 import os
-import time
+import subprocess
 import cv2
-from datetime import datetime, timedelta, time as dt_time
+import pytesseract
+import re
+from datetime import datetime, timedelta
 
-from .utils.video import trim_video_clip
-from .utils.ocr import extract_timestamp_from_frame, is_time_fluctuation
+def parse_time_from_ocr(text):
+    """Extracts HH:MM:SS from OCR text using regex."""
+    match = re.search(r'(\d{2}):(\d{2}):(\d{2})', text)
+    if match:
+        return match.group(0)
+    return None
 
-def process_video_file(video_path, output_folder, roi, fluctuation_seconds, debug_ocr=False):
+def time_str_to_seconds(time_str):
+    """Converts a HH:MM:SS string to total seconds."""
+    h, m, s = map(int, time_str.split(':'))
+    return h * 3600 + m * 60 + s
+
+def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation_seconds, target_times, debug_ocr=False):
     """
-    Processes a single video file to find and trim clips based on timestamp jumps.
-    This function now includes detailed, frame-by-frame logging and an OCR debug mode.
+    Processes a single video file to find target timestamps via OCR and trim one-minute clips.
     """
-    print(f"\nPROCESSING: '{os.path.basename(video_path)}'")
-
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"ERROR: Could not open video file: {video_path}")
-        return 0
+        return
 
-    frame_rate = cap.get(cv2.CAP_PROP_FPS)
-    if frame_rate == 0:
-        print(f"WARNING: Could not determine frame rate for {video_path}. Assuming 30 FPS.")
-        frame_rate = 30
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps == 0:
+        print(f"ERROR: Could not get FPS for video: {video_path}. Skipping.")
+        return
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    print(f"  - Video Info: {total_frames} frames at {frame_rate:.2f} FPS.")
-    
-    # If debug mode is on, process only the first frame and exit.
+    y1, y2, x1, x2 = timestamp_roi
+    processed_targets = set()
+    last_valid_time_seconds = -1
+
+    print(f"INFO: Processing {os.path.basename(video_path)} with FPS: {fps:.2f}")
     if debug_ocr:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         ret, frame = cap.read()
         if ret:
-            # This call will save the debug image and then exit the script
-            extract_timestamp_from_frame(frame, roi, debug=True)
-        else:
-            print("ERROR: Could not read the first frame of the video for debugging.")
-        cap.release()
-        return 0
+            roi_frame = frame[y1:y2, x1:x2]
+            debug_filename = "debug_ocr_frame.png"
+            cv2.imwrite(debug_filename, roi_frame)
+            print(f"INFO: DEBUG_OCR is True. Saved timestamp ROI of first frame to {debug_filename}")
+        # Reset video capture for processing from the beginning
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    print(f"  - Analyzing one frame every second of video...")
-    print("  --------------------------------------------------")
-    print("  Frame | Video Time | OCR Raw Text      | Status")
-    print("  --------------------------------------------------")
 
-    last_valid_time = None
-    last_frame_number = -1
-    match_count = 0
-    consecutive_no_reads = 0
+    frame_interval = int(fps)  # Analyze one frame per second
+    frame_num = 0
 
-    for frame_number in range(0, total_frames, int(frame_rate)):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+    while cap.isOpened():
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
         ret, frame = cap.read()
-
         if not ret:
-            print(f"  - WARN: Could not read frame {frame_number}. Skipping.")
-            continue
-
-        current_time, raw_text = extract_timestamp_from_frame(frame, roi)
-        video_time_sec = frame_number / frame_rate
-
-        log_status = "-"
-        if raw_text:
-            log_status = f"Found: '{raw_text}'"
-        else:
-            log_status = "No text found"
-        if current_time:
-            log_status += f" -> Parsed: {current_time}"
-        
-        print(f"  {frame_number:<5d} | {timedelta(seconds=int(video_time_sec))} | {raw_text:<15s} | {log_status}")
-
-        if current_time:
-            consecutive_no_reads = 0
-            if last_valid_time and is_time_fluctuation(last_valid_time, current_time, fluctuation_seconds):
-                match_count += 1
-                print(f"  *** Time Jump DETECTED! ***")
-                print(f"    - From: {last_valid_time} -> To: {current_time}")
-                
-                start_time_seconds = (last_frame_number / frame_rate) - 30
-                start_time_seconds = max(0, start_time_seconds)
-                
-                base, _ = os.path.splitext(os.path.basename(video_path))
-                output_filename = f"{base}_clip_{match_count}.mp4"
-                output_path = os.path.join(output_folder, output_filename)
-                
-                trim_video_clip(video_path, output_path, start_time_seconds, duration_seconds=60)
-                
-            last_valid_time = current_time
-            last_frame_number = frame_number
-        else:
-            consecutive_no_reads += 1
-
-        if consecutive_no_reads > 10:
-            print("  - INFO: Stopping analysis for this file due to 10 consecutive failed OCR reads.")
             break
 
+        roi_frame = frame[y1:y2, x1:x2]
+        gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+        
+        try:
+            ocr_text = pytesseract.image_to_string(gray_frame, config='--psm 6').strip()
+            current_time_str = parse_time_from_ocr(ocr_text)
+
+            if current_time_str:
+                current_time_seconds = time_str_to_seconds(current_time_str)
+
+                # Fluctuation check
+                if last_valid_time_seconds != -1 and abs(current_time_seconds - last_valid_time_seconds) > ocr_fluctuation_seconds:
+                    print(f"WARN: OCR fluctuation detected. Read: {current_time_str}, Last Valid: {timedelta(seconds=last_valid_time_seconds)}. Skipping frame.")
+                    frame_num += frame_interval
+                    continue
+                
+                last_valid_time_seconds = current_time_seconds
+
+                for target in target_times:
+                    if target == current_time_str and target not in processed_targets:
+                        print(f"INFO: Match found for {target} at frame {frame_num}!")
+                        
+                        start_time_seconds = frame_num / fps
+                        output_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_{target.replace(':', '_')}.avi"
+                        output_path = os.path.join(output_folder, output_filename)
+                        
+                        # FFmpeg command for high-quality trimming
+                        command = [
+                            'ffmpeg', '-y', '-ss', str(start_time_seconds),
+                            '-i', video_path, '-t', '00:01:00',
+                            '-c:v', 'libx264', '-preset', 'medium',
+                            '-crf', '23', '-c:a', 'aac', '-b:a', '192k',
+                            output_path
+                        ]
+                        
+                        print(f"INFO: Trimming 1-minute clip for {target}...")
+                        subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        
+                        print(f"SUCCESS: Saved trimmed clip to {output_path}")
+                        processed_targets.add(target)
+            
+            # If all target times for this video have been found, we can stop processing it.
+            if len(processed_targets) == len(target_times):
+                print(f"INFO: All target times found for {os.path.basename(video_path)}. Moving to next video.")
+                break
+
+        except Exception as e:
+            print(f"ERROR: An error occurred during OCR or trimming for frame {frame_num}. Details: {e}")
+
+        frame_num += frame_interval
+
     cap.release()
-    print(f"\nFINISHED: '{os.path.basename(video_path)}'. Found {match_count} match(es).")
-    return match_count

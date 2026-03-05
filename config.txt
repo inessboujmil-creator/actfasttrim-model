@@ -4,14 +4,12 @@
 #
 # - Use forward slashes (/) for paths, even on Windows (e.g., C:/Users/...).
 # - Do not add a trailing slash to folder paths.
-# - Ensure Tesseract is installed and its path is correct.
 #
 # -----------------------------------------------------------------------------
 
 [SETTINGS]
 # Path to the Tesseract OCR executable.
-# Must be an absolute path. Use raw string format for Windows paths.
-# Example: r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Example: TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # The (Y, X) coordinates for the timestamp region of interest (ROI).
@@ -22,21 +20,22 @@ TIMESTAMP_ROI = [450, 480, 800, 915]
 OCR_FLUCTUATION_SECONDS = 300
 
 # The number of days to look back for unprocessed videos.
-# The script will search for video files from today up to this many days ago.
 DAYS_TO_PROCESS = 7
 
 # How often (in seconds) to scan the source folders for new videos.
 SCAN_INTERVAL_SECONDS = 300
 
+# A comma-separated list of HH:MM:SS timestamps to trim.
+TARGET_TIMES = 00:30:00, 01:30:00, 02:30:00, 03:30:00, 04:30:00, 05:30:00, 06:30:00, 08:30:00, 09:45:00, 10:45:00, 13:00:00, 14:00:00, 16:00:00, 17:45:00, 20:30:00, 21:30:00, 22:30:00, 23:30:00
+
 # --- VISUAL DEBUGGING ---
-# If True, the script will process ONLY the first frame of the first video found,
-# save the resulting OCR image as 'debug_ocr_frame.png', and then stop.
-# This helps verify that your TIMESTAMP_ROI is correct.
-# Set to False for normal operation.
+# If True, the script will save the OCR region of the first processed frame
+# as 'debug_ocr_frame.png' to help verify the TIMESTAMP_ROI.
+# The script will continue its normal operation after saving the debug image.
 DEBUG_OCR = True
 
 [FOLDER_PAIRS]
-# Define source folders and their corresponding destination folders.
-# The key is the source, and the value is the destination.
+# Define source folders (keys) and their corresponding destination folders (values).
+# Do NOT enclose paths in quotes.
 E:/Records/Record Plan/Ch1_CAM01 = E:/Records/Record Plan/Trimmed_CAM01
 E:/Records/Record Plan/Ch1_CAM02 = E:/Records/Record Plan/Trimmed_CAM02
