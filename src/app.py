@@ -5,6 +5,7 @@ import cv2
 import pytesseract
 import re
 from datetime import datetime, timedelta
+import numpy as np
 
 def parse_time_from_ocr(text):
     """Extracts HH:MM:SS from OCR text using regex."""
@@ -19,24 +20,34 @@ def time_str_to_seconds(time_str):
     return h * 3600 + m * 60 + s
 
 def get_ocr_ready_frame(roi_frame):
-    """Applies a definitive, multi-stage image processing pipeline for difficult OCR."""
+    """
+    Applies a new, advanced, multi-stage image processing pipeline designed for
+    maximum OCR accuracy on difficult, noisy video timestamps. This is the definitive pipeline.
+    """
     # 1. Convert to grayscale
     gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
-    # 2. Apply a bilateral filter to reduce noise while preserving edges
-    blurred = cv2.bilateralFilter(gray, 9, 75, 75)
+    # 2. Upscale the image significantly (3x) to provide more detail for OCR
+    upscaled = cv2.resize(gray, (0, 0), fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
 
-    # 3. Apply adaptive thresholding
-    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    # 3. Apply a Median Blur to remove salt-and-pepper noise which is common in digital video
+    blurred = cv2.medianBlur(upscaled, 3)
 
-    # 4. Invert the image - Tesseract often prefers black text on a white background
-    inverted = cv2.bitwise_not(thresh)
+    # 4. Sharpen the image to make the edges of the digits more distinct using a sharpening kernel
+    sharpen_kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+    sharpened = cv2.filter2D(blurred, -1, sharpen_kernel)
 
-    # 5. Use morphological closing to connect broken parts of characters
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    closing = cv2.morphologyEx(inverted, cv2.MORPH_CLOSE, kernel)
+    # 5. Apply Otsu's thresholding to automatically find the optimal value to create a clean black-and-white image
+    _, thresh = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    return closing
+    # 6. Ensure black text on a white background, which Tesseract performs best with.
+    # If the image is mostly black (low mean pixel value), invert it.
+    if cv2.mean(thresh)[0] < 128:
+        final_image = cv2.bitwise_not(thresh)
+    else:
+        final_image = thresh
+
+    return final_image
 
 def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation_seconds, target_times, debug_ocr=False):
     """
