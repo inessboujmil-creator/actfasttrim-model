@@ -21,12 +21,16 @@ def time_str_to_seconds(time_str):
 
 def get_ocr_ready_frame(roi_frame):
     """
-    The final, correct, and robust image processing pipeline.
-    This focuses on the three pillars of successful OCR: Contrast, Scale, and Binarization.
+    Enhanced OCR pipeline with noise removal.
     """
     gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
     inverted = cv2.bitwise_not(gray)
-    upscaled = cv2.resize(inverted, (0, 0), fx=4, fy=4, interpolation=cv2.INTER_LANCZOS4)
+    # Morphological opening to remove small noise particles
+    kernel = np.ones((2,2),np.uint8)
+    opening = cv2.morphologyEx(inverted, cv2.MORPH_OPEN, kernel)
+    # Upscale for better recognition
+    upscaled = cv2.resize(opening, (0, 0), fx=4, fy=4, interpolation=cv2.INTER_LANCZOS4)
+    # Threshold to get a pure black-and-white image
     _, final_image = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return final_image
 

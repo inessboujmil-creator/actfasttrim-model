@@ -157,6 +157,8 @@ def main():
                 time.sleep(scan_interval)
                 continue
 
+            # --- Start processing immediately ---
+            print(f"INFO: New videos found. Starting processing immediately.")
             for day in sorted_days:
                 print(f"\n--- Processing Day: {day} ---")
                 for source_folder, output_folder_name in folders_data.items():
@@ -185,9 +187,9 @@ def main():
                             debug_ocr=debug_ocr
                         )
                         add_to_processed_files(PROCESSED_FILES_DB, video_path)
-
-            print(f"\nINFO: Scan complete. Waiting for {scan_interval} seconds...")
-            time.sleep(scan_interval)
+            
+            print("\nINFO: All pending videos processed.")
+            # --- Only wait if no new files were found in the next iteration ---
 
     except KeyboardInterrupt:
         print("\nINFO: System stopped by user.")
