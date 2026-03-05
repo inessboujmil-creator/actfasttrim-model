@@ -1,149 +1,162 @@
 
-from src.app import process_video_file
-import time
+import configparser
 import os
+import time
+import traceback
+from datetime import datetime, timedelta
+
+from src.app import process_video_file
 from src.utils.video import get_processed_files, add_to_processed_files
 
-# --- CONFIGURATION ---
+# --- Constants ---
 CONFIG_FILE = 'config.txt'
 PROCESSED_FILES_DB = 'processed_files.txt'
 
 def load_configuration():
-    """Loads all settings from the config.txt file."""
-    config = {
-        'TESSERACT_CMD': None,
-        'FOLDER_PAIRS': {},
-        'SCAN_INTERVAL_SECONDS': 60,
-        'TIMESTAMP_ROI': [10, 50, 1100, 1280], # Default ROI
-        'OCR_FLUCTUATION_SECONDS': 10, # Default fluctuation
-        'DEBUG_OCR': False # Default OCR debug mode
-    }
-    
-    print(f"INFO: Loading configuration from: {os.path.abspath(CONFIG_FILE)}")
-    
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-
-                key, value = line.split('=', 1)
-                key = key.strip()
-                value = value.strip()
-
-                if key == 'TESSERACT_CMD':
-                    config[key] = value
-                    print(f"  - Loaded {key}: {value}")
-                elif key == 'FOLDER_CONFIG':
-                    src, dst = value.split(' -> ')
-                    config['FOLDER_PAIRS'][src.strip()] = dst.strip()
-                    print(f"  - Loaded {key}: {src.strip()} -> {dst.strip()}")
-                elif key in ['SCAN_INTERVAL_SECONDS', 'OCR_FLUCTUATION_SECONDS']:
-                    config[key] = int(value)
-                    print(f"  - Loaded {key}: {value}")
-                elif key == 'TIMESTAMP_ROI':
-                    config[key] = [int(v.strip()) for v in value.split(',')]
-                    print(f"  - Loaded {key}: {config[key]}")
-                elif key == 'DEBUG_OCR':
-                    config[key] = (value.lower() == 'true')
-                    print(f"  - Loaded {key}: {config[key]}")
-    except FileNotFoundError:
+    """
+    Loads settings from the config.txt file using configparser.
+    This provides a structured and robust way to read the configuration.
+    """
+    if not os.path.exists(CONFIG_FILE):
         print(f"\nFATAL: Configuration file '{CONFIG_FILE}' not found.")
-        print("Please create it and configure the required paths and settings.")
+        print("Please ensure the file exists and is correctly formatted.")
         exit()
-    except Exception as e:
-        print(f"\nFATAL: Error parsing configuration file. Please check the syntax. Error: {e}")
-        exit()
-        
+
+    print(f"INFO: Loading configuration from: {os.path.abspath(CONFIG_FILE)}")
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE)
     return config
 
+def find_unprocessed_videos(config, already_processed):
+    """
+    Scans all source folders for new .mp4 video files that haven't been processed yet.
+    
+    Returns:
+        A list of full video file paths, sorted chronologically by filename.
+    """
+    folder_pairs = config['FOLDER_PAIRS']
+    days_to_process = config.getint('SETTINGS', 'DAYS_TO_PROCESS', fallback=7)
+    
+    unprocessed_videos = []
+    
+    # Calculate the date range to search for videos
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days_to_process)
+    
+    print(f"INFO: Searching for video files from the last {days_to_process} days...")
+
+    for src_folder in folder_pairs:
+        if not os.path.isdir(src_folder):
+            print(f"ERROR: Source folder not found: {src_folder}")
+            continue
+            
+        print(f"INFO: Scanning folder: {src_folder}")
+        try:
+            for filename in os.listdir(src_folder):
+                if filename.lower().endswith(".mp4") and filename not in already_processed:
+                    try:
+                        file_path = os.path.join(src_folder, filename)
+                        # Check if the file's modification time is within the desired date range
+                        file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                        if start_date <= file_mod_time <= end_date:
+                            unprocessed_videos.append(file_path)
+                    except Exception:
+                        # In case the filename format is unexpected
+                        continue
+        except Exception as e:
+            print(f"ERROR: Could not read files in {src_folder}. Reason: {e}")
+            
+    # Sort files by their full path, which usually includes a timestamp
+    return sorted(unprocessed_videos)
+
 def main():
+    """
+    Main loop to continuously scan for and process new video files.
+    """
     config = load_configuration()
     
-    # Set Tesseract path if specified
-    if config['TESSERACT_CMD']:
+    # --- Tesseract Configuration ---
+    tesseract_path = config.get('SETTINGS', 'TESSERACT_PATH', fallback=None)
+    if tesseract_path and os.path.exists(tesseract_path.strip('\"')):
         import pytesseract
-        pytesseract.pytesseract.tesseract_cmd = config['TESSERACT_CMD']
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
         print("INFO: Tesseract command path loaded successfully. OCR is active.")
     else:
-        print("INFO: TESSERACT_CMD not set in config. OCR will not be available.")
+        print("WARNING: Tesseract path not found or not set in config. OCR will not be available.")
 
-
-    print("\n--- Automated Video Processing System ---")
-    monitored_folders = list(config['FOLDER_PAIRS'].keys())
-    print(f"Monitoring folders: {', '.join(monitored_folders)}")
-    print("System started. Press Ctrl+C to stop.")
+    # --- Load other settings ---
+    timestamp_roi = eval(config.get('SETTINGS', 'TIMESTAMP_ROI', fallback='[0,0,0,0]'))
+    fluctuation_seconds = config.getint('SETTINGS', 'OCR_FLUCTUATION_SECONDS', fallback=300)
+    scan_interval = config.getint('SETTINGS', 'SCAN_INTERVAL_SECONDS', fallback=300)
+    debug_ocr = config.getboolean('SETTINGS', 'DEBUG_OCR', fallback=False)
+    folder_pairs = {k.strip('\"'): v.strip('\"') for k, v in config['FOLDER_PAIRS'].items()}
     
+    print("\n--- Automated Video Processing System ---")
+    print(f"Monitoring {len(folder_pairs)} folder pair(s).")
+    print(f"Scan Interval: {scan_interval} seconds.")
+    print("System started. Press Ctrl+C to stop.")
+
     try:
         while True:
-            print(f"\nINFO: Scanning all folders for new files... (Interval: {config['SCAN_INTERVAL_SECONDS']}s)")
-            processed_files_this_run = False
+            print("\n" + "="*50)
+            print(f"INFO: Starting new scan at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
-            # Get the list of files that have already been processed
             already_processed = get_processed_files(PROCESSED_FILES_DB)
+            new_videos = find_unprocessed_videos(config, already_processed)
             
-            # Find all new, unprocessed video files across all monitored folders
-            all_new_files = {}
-            for src_folder in monitored_folders:
-                try:
-                    for filename in os.listdir(src_folder):
-                        if filename.endswith(".avi") and filename not in already_processed:
-                            day_key = filename[:8] # Group by day (YYYYMMDD)
-                            if day_key not in all_new_files:
-                                all_new_files[day_key] = {f: [] for f in monitored_folders}
-                            all_new_files[day_key][src_folder].append(filename)
-                except FileNotFoundError:
-                    print(f"ERROR: Source folder not found: {src_folder}")
-                except Exception as e:
-                    print(f"ERROR: Could not read files in {src_folder}. Reason: {e}")
-
-            if not all_new_files:
-                print("INFO: No new files to process.")
+            if not new_videos:
+                print("INFO: No new video files to process.")
             else:
-                print(f"INFO: Found new files to process in {len(config['FOLDER_PAIRS'])} folder(s).")
+                print(f"INFO: Found {len(new_videos)} new video file(s) to process.")
+                
+                for video_path in new_videos:
+                    src_folder = os.path.dirname(video_path)
+                    filename = os.path.basename(video_path)
+                    output_folder = folder_pairs.get(src_folder)
 
-                # Process the oldest day first to handle backlog chronologically
-                oldest_day = sorted(all_new_files.keys())[0]
-                print(f"\n--- Processing oldest day found: {oldest_day} ---")
-                
-                files_for_the_day = all_new_files[oldest_day]
-                
-                # Process folder by folder for that day
-                for src_folder, filenames in files_for_the_day.items():
-                    if not filenames:
+                    if not output_folder:
+                        print(f"ERROR: No output folder configured for source: {src_folder}. Skipping file.")
                         continue
-
-                    output_folder = config['FOLDER_PAIRS'][src_folder]
+                    
                     os.makedirs(output_folder, exist_ok=True)
                     
-                    print(f"\n-> Turn for '{os.path.basename(src_folder)}': Processing {len(filenames)} file(s) for day {oldest_day}.")
+                    print(f"\n--- Processing Video ---")
+                    print(f"  - Source: {video_path}")
+                    print(f"  - Output: {output_folder}")
                     
-                    # Sort files chronologically to process them in order
-                    sorted_files = sorted(filenames)
-                    
-                    for filename in sorted_files:
-                        video_path = os.path.join(src_folder, filename)
+                    try:
                         process_video_file(
-                            video_path,
-                            output_folder,
-                            config['TIMESTAMP_ROI'],
-                            config['OCR_FLUCTUATION_SECONDS'],
-                            config['DEBUG_OCR']
+                            video_path=video_path,
+                            output_folder=output_folder,
+                            timestamp_roi=timestamp_roi,
+                            ocr_fluctuation_seconds=fluctuation_seconds,
+                            debug_ocr=debug_ocr
                         )
-                        # After processing, add the file to our database
+                        # Add to the processed list only after successful processing
                         add_to_processed_files(PROCESSED_FILES_DB, filename)
-                        processed_files_this_run = True
+                        print(f"INFO: Successfully processed and logged {filename}.")
 
-            # If we processed files, scan again immediately. Otherwise, wait.
-            if not processed_files_this_run:
-                time.sleep(config['SCAN_INTERVAL_SECONDS'])
+                        # If in debug mode, stop after one file.
+                        if debug_ocr:
+                            print("\nINFO: DEBUG_OCR is True. Halting after one file.")
+                            return
+
+                    except Exception as e:
+                        print(f"\nFATAL ERROR during video processing: {e}")
+                        print("An unrecoverable error occurred. See details below.")
+                        traceback.print_exc()
+                        print(f"Skipping file {filename} due to error.")
+                        # Optionally, log the filename to a separate error log
+                        with open("error_log.txt", "a") as f:
+                            f.write(f"{datetime.now()}: {filename} - {e}\n")
+            
+            print(f"INFO: Scan complete. Waiting for {scan_interval} seconds before next scan.")
+            time.sleep(scan_interval)
 
     except KeyboardInterrupt:
-        print("\nINFO: System stopped by user. Exiting.")
+        print("\nINFO: System stopped by user. Exiting gracefully.")
     except Exception as e:
         print(f"\nFATAL: An unexpected error occurred in the main loop: {e}")
-        import traceback
         traceback.print_exc()
 
 if __name__ == "__main__":
