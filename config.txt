@@ -38,6 +38,5 @@ DEBUG_OCR = True
 [FOLDER_PAIRS]
 # Define source folders and their corresponding destination folders.
 # The key is the source, and the value is the destination.
-# Enclose paths in double quotes.
-"E:/Records/Record Plan/Ch1_CAM01" = "E:/Records/Record Plan/Trimmed_CAM01"
-"E:/Records/Record Plan/Ch1_CAM02" = "E:/Records/Record Plan/Trimmed_CAM02"
+E:/Records/Record Plan/Ch1_CAM01 = E:/Records/Record Plan/Trimmed_CAM01
+E:/Records/Record Plan/Ch1_CAM02 = E:/Records/Record Plan/Trimmed_CAM02
