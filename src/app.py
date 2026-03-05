@@ -21,33 +21,24 @@ def time_str_to_seconds(time_str):
 
 def get_ocr_ready_frame(roi_frame):
     """
-    Applies a new, advanced, multi-stage image processing pipeline designed for
-    maximum OCR accuracy on difficult, noisy video timestamps. This is the definitive pipeline.
+    Applies a robust, adaptive image processing pipeline focused on clean binarization.
+    This avoids complex filters that may have introduced artifacts in previous attempts.
     """
     # 1. Convert to grayscale
     gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
-    # 2. Upscale the image significantly (3x) to provide more detail for OCR
-    upscaled = cv2.resize(gray, (0, 0), fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    # 2. Apply a Gaussian Blur to reduce high-frequency noise without destroying edges
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # 3. Apply a Median Blur to remove salt-and-pepper noise which is common in digital video
-    blurred = cv2.medianBlur(upscaled, 3)
+    # 3. Use adaptive thresholding to handle variations in lighting across the ROI.
+    # This is more robust than a single global threshold.
+    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
 
-    # 4. Sharpen the image to make the edges of the digits more distinct using a sharpening kernel
-    sharpen_kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-    sharpened = cv2.filter2D(blurred, -1, sharpen_kernel)
+    # 4. Invert the image. Adaptive thresholding often results in white text on a black background,
+    # but Tesseract performs best with black text on a white background.
+    inverted = cv2.bitwise_not(thresh)
 
-    # 5. Apply Otsu's thresholding to automatically find the optimal value to create a clean black-and-white image
-    _, thresh = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    # 6. Ensure black text on a white background, which Tesseract performs best with.
-    # If the image is mostly black (low mean pixel value), invert it.
-    if cv2.mean(thresh)[0] < 128:
-        final_image = cv2.bitwise_not(thresh)
-    else:
-        final_image = thresh
-
-    return final_image
+    return inverted
 
 def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation_seconds, target_times, debug_ocr=False):
     """
@@ -70,8 +61,8 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     last_valid_time_seconds = -1
 
     # --- Tesseract Configuration ---
-    # PSM 7: Treat the image as a single text line.
-    tesseract_config = '--psm 7 -c tessedit_char_whitelist=0123456789:'
+    # PSM 13: Treat the image as a single line of text, bypassing Tesseract-specific hacks.
+    tesseract_config = '--psm 13 -c tessedit_char_whitelist=0123456789:'
 
     print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
     if debug_ocr:
@@ -104,11 +95,13 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
         
         try:
             ocr_text = pytesseract.image_to_string(ocr_ready_frame, config=tesseract_config).strip()
-            
-            if ocr_text:
-                print(f"DEBUG: Raw OCR output for frame #{frame_num}: '{ocr_text}'")
-
             current_time_str = parse_time_from_ocr(ocr_text)
+
+            # --- Enhanced Logging ---
+            if current_time_str:
+                print(f"INFO: OCR Success! Parsed timestamp: {current_time_str} from raw text: '{ocr_text}'")
+            elif ocr_text:
+                print(f"DEBUG: OCR found invalid text for frame #{frame_num}: '{ocr_text}'")
 
             if current_time_str:
                 current_time_seconds = time_str_to_seconds(current_time_str)
