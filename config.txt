@@ -9,8 +9,8 @@
 
 [SETTINGS]
 # Path to the Tesseract OCR executable.
-# Example: TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Example: TESSERACT_PATH = C:/Program Files/Tesseract-OCR/tesseract.exe
+TESSERACT_PATH = C:/Program Files/Tesseract-OCR/tesseract.exe
 
 # The (Y, X) coordinates for the timestamp region of interest (ROI).
 # Format: [y1, y2, x1, x2] (a JSON array)
