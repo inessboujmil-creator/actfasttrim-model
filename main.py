@@ -44,6 +44,22 @@ def get_config_value(config, section, option, is_json=False, is_list=False, is_i
         print(f"ERROR: Could not parse JSON value for '{option}' in section '[{section}]'.")
         sys.exit(1)
 
+def load_folder_pairs(config):
+    """Loads and validates folder pairs from the configuration."""
+    if not config.has_section('FOLDER_PAIRS'):
+        print("ERROR: [FOLDER_PAIRS] section is missing from the config file.")
+        sys.exit(1)
+
+    folders_data = {}
+    for _, value in config.items('FOLDER_PAIRS'):
+        parts = [p.strip() for p in value.split(',')]
+        if len(parts) != 2:
+            print(f"ERROR: Invalid format in [FOLDER_PAIRS]. Each line must be 'source, destination'. Problem line: {value}")
+            sys.exit(1)
+        source, destination = parts
+        folders_data[source] = destination
+    return folders_data
+
 def get_processed_files(db_path):
     """Loads the set of processed file paths from a JSON file."""
     if not os.path.exists(db_path):
@@ -127,11 +143,10 @@ def main():
     else:
         print(f"WARNING: Tesseract path not set or invalid. OCR will not be available.")
 
-    # Load folder pairs
-    try:
-        folders_data = {key.upper(): val for key, val in config.items('FOLDER_PAIRS')}
-    except (NoSectionError, NoOptionError):
-        print("ERROR: [FOLDER_PAIRS] section is missing or empty in the config file.")
+    # Load folder pairs using the new, safer method
+    folders_data = load_folder_pairs(config)
+    if not folders_data:
+        print("ERROR: [FOLDER_PAIRS] section is empty or invalid. Please check the config file.")
         sys.exit(1)
 
     # Sort target times chronologically

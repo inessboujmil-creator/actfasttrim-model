@@ -34,7 +34,8 @@ TARGET_TIMES = 00:30:00, 01:30:00, 02:30:00, 03:30:00, 04:30:00, 05:30:00, 06:30
 DEBUG_OCR = True
 
 [FOLDER_PAIRS]
-# Define source folders (keys) and their corresponding destination folders (values).
-# Do NOT enclose paths in quotes.
-E:/Records/Record Plan/Ch1_CAM01 = E:/Records/Record Plan/Trimmed_CAM01
-E:/Records/Record Plan/Ch1_CAM02 = E:/Records/Record Plan/Trimmed_CAM02
+# Define pairs of source and destination folders, separated by a comma.
+# The key (e.g., CAM01) is just a label and can be anything unique.
+# Format: LABEL = /path/to/source, /path/to/destination
+CAM01 = E:/Records/Record Plan/Ch1_CAM01, E:/Records/Record Plan/Trimmed_CAM01
+CAM02 = E:/Records/Record Plan/Ch1_CAM02, E:/Records/Record Plan/Trimmed_CAM02
