@@ -99,7 +99,6 @@ def find_unprocessed_videos_grouped_by_day(folders_data, days_to_process, proces
             if video_path in processed_files:
                 continue
 
-            # Extract date from filename (e.g., '...20240305...')
             match = re.search(r'(\d{8})', filename)
             if not match:
                 continue
@@ -114,7 +113,6 @@ def find_unprocessed_videos_grouped_by_day(folders_data, days_to_process, proces
             except ValueError:
                 continue
     
-    # Sort the videos within each day chronologically by filename
     for day in videos_by_day:
         videos_by_day[day].sort()
 
@@ -128,7 +126,6 @@ def main():
     """Main execution function."""
     config = load_configuration()
     
-    # Load settings
     tesseract_path = get_config_value(config, 'SETTINGS', 'TESSERACT_PATH')
     timestamp_roi = get_config_value(config, 'SETTINGS', 'TIMESTAMP_ROI', is_json=True)
     ocr_fluctuation_seconds = get_config_value(config, 'SETTINGS', 'OCR_FLUCTUATION_SECONDS', is_int=True)
@@ -137,20 +134,17 @@ def main():
     target_times = get_config_value(config, 'SETTINGS', 'TARGET_TIMES', is_list=True)
     debug_ocr = config.getboolean('SETTINGS', 'DEBUG_OCR')
 
-    # Set Tesseract command path
     if os.path.exists(tesseract_path):
         pytesseract.tesseract_cmd = tesseract_path
         print("INFO: Tesseract command path loaded successfully.")
     else:
         print(f"WARNING: Tesseract path not set or invalid. OCR will not be available.")
 
-    # Load folder pairs using the new, safer method
     folders_data = load_folder_pairs(config)
     if not folders_data:
         print("ERROR: [FOLDER_PAIRS] section is empty or invalid. Please check the config file.")
         sys.exit(1)
 
-    # Sort target times chronologically
     target_times.sort(key=time_str_to_seconds)
     
     print("\n--- Automated Video Processing System ---")
@@ -172,25 +166,31 @@ def main():
                 time.sleep(scan_interval)
                 continue
 
-            # Process videos day by day, alternating between folders
             for day in sorted_days:
                 print(f"\n--- Processing Day: {day} ---")
-                for source_folder, output_folder in folders_data.items():
-                    videos_in_folder_for_day = [v for v in videos_by_day[day] if v.startswith(source_folder)]
+                for source_folder, output_folder_name in folders_data.items():
+                    videos_in_folder_for_day = [v for v in videos_by_day.get(day, []) if os.path.dirname(v) == os.path.normpath(source_folder)]
                     if not videos_in_folder_for_day:
                         continue
+                    
+                    # --- DEFINITIVE PATH FIX ---
+                    # Construct the correct absolute path for the output folder.
+                    # It is created as a sibling to the parent of the source folder.
+                    parent_of_source = os.path.dirname(os.path.normpath(source_folder))
+                    output_folder_path = os.path.join(parent_of_source, output_folder_name)
+                    # --- END FIX ---
 
                     print(f"--- Folder: {source_folder} ---")
-                    if not os.path.exists(output_folder):
-                        print(f"INFO: Creating output directory: {output_folder}")
-                        os.makedirs(output_folder)
+                    if not os.path.exists(output_folder_path):
+                        print(f"INFO: Creating output directory: {output_folder_path}")
+                        os.makedirs(output_folder_path)
                     
                     for video_path in videos_in_folder_for_day:
                         print("\n--- Processing Video ---")
                         print(f"  - Source: {video_path}")
                         process_video_file(
                             video_path=video_path,
-                            output_folder=output_folder,
+                            output_folder=output_folder_path, # Use the corrected, absolute path
                             timestamp_roi=timestamp_roi,
                             ocr_fluctuation_seconds=ocr_fluctuation_seconds,
                             target_times=target_times,

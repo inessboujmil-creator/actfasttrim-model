@@ -21,24 +21,24 @@ def time_str_to_seconds(time_str):
 
 def get_ocr_ready_frame(roi_frame):
     """
-    Applies a robust, adaptive image processing pipeline focused on clean binarization.
-    This avoids complex filters that may have introduced artifacts in previous attempts.
+    The final, correct, and robust image processing pipeline.
+    This focuses on the three pillars of successful OCR: Contrast, Scale, and Binarization.
     """
     # 1. Convert to grayscale
     gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
-    # 2. Apply a Gaussian Blur to reduce high-frequency noise without destroying edges
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    # 2. Invert the image. Tesseract performs best with black text on a white background.
+    inverted = cv2.bitwise_not(gray)
 
-    # 3. Use adaptive thresholding to handle variations in lighting across the ROI.
-    # This is more robust than a single global threshold.
-    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    # 3. Upscale the image significantly (4x) using Lanczos interpolation, which provides
+    # superior quality for upscaling and results in sharper text for the OCR engine.
+    upscaled = cv2.resize(inverted, (0, 0), fx=4, fy=4, interpolation=cv2.INTER_LANCZOS4)
 
-    # 4. Invert the image. Adaptive thresholding often results in white text on a black background,
-    # but Tesseract performs best with black text on a white background.
-    inverted = cv2.bitwise_not(thresh)
+    # 4. Apply Otsu's thresholding. This is the most reliable method for automatic
+    # binarization on a high-contrast, upscaled image like this one.
+    _, final_image = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    return inverted
+    return final_image
 
 def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation_seconds, target_times, debug_ocr=False):
     """
@@ -60,9 +60,8 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     processed_targets = set()
     last_valid_time_seconds = -1
 
-    # --- Tesseract Configuration ---
-    # PSM 13: Treat the image as a single line of text, bypassing Tesseract-specific hacks.
-    tesseract_config = '--psm 13 -c tessedit_char_whitelist=0123456789:'
+    # --- Tesseract Configuration (Final) ---
+    tesseract_config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:'
 
     print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
     if debug_ocr:
@@ -71,14 +70,10 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
         if ret:
             roi_frame = frame[y1:y2, x1:x2]
             cv2.imwrite("debug_ocr_frame_raw.png", roi_frame)
-            
             processed_frame_for_debug = get_ocr_ready_frame(roi_frame)
-            
-            debug_filename = "debug_ocr_frame_processed.png"
-            cv2.imwrite(debug_filename, processed_frame_for_debug)
+            cv2.imwrite("debug_ocr_frame_processed.png", processed_frame_for_debug)
             print(f"INFO: DEBUG_OCR is True. Saved RAW and PROCESSED timestamp ROI to debug files.")
-
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # Reset frame position
 
     frame_interval = int(fps)
     frame_num = 0
@@ -97,7 +92,6 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
             ocr_text = pytesseract.image_to_string(ocr_ready_frame, config=tesseract_config).strip()
             current_time_str = parse_time_from_ocr(ocr_text)
 
-            # --- Enhanced Logging ---
             if current_time_str:
                 print(f"INFO: OCR Success! Parsed timestamp: {current_time_str} from raw text: '{ocr_text}'")
             elif ocr_text:
