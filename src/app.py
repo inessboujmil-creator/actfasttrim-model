@@ -22,21 +22,24 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     """
     Processes a single video file to find target timestamps via OCR and trim one-minute clips.
     """
-    cap = cv2.VideoCapture(video_path)
+    # Normalize the path to be safe for external tools
+    normalized_video_path = os.path.normpath(video_path)
+
+    cap = cv2.VideoCapture(normalized_video_path)
     if not cap.isOpened():
-        print(f"ERROR: Could not open video file: {video_path}")
+        print(f"ERROR: Could not open video file: {normalized_video_path}")
         return
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps == 0:
-        print(f"ERROR: Could not get FPS for video: {video_path}. Skipping.")
+        print(f"ERROR: Could not get FPS for video: {normalized_video_path}. Skipping.")
         return
 
     y1, y2, x1, x2 = timestamp_roi
     processed_targets = set()
     last_valid_time_seconds = -1
 
-    print(f"INFO: Processing {os.path.basename(video_path)} with FPS: {fps:.2f}")
+    print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
     if debug_ocr:
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         ret, frame = cap.read()
@@ -45,9 +48,7 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
             debug_filename = "debug_ocr_frame.png"
             cv2.imwrite(debug_filename, roi_frame)
             print(f"INFO: DEBUG_OCR is True. Saved timestamp ROI of first frame to {debug_filename}")
-        # Reset video capture for processing from the beginning
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-
 
     frame_interval = int(fps)  # Analyze one frame per second
     frame_num = 0
@@ -56,19 +57,24 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
         ret, frame = cap.read()
         if not ret:
+            print("INFO: End of video file reached.")
             break
 
+        print(f"DEBUG: Analyzing frame #{frame_num}...")
         roi_frame = frame[y1:y2, x1:x2]
         gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
         
         try:
             ocr_text = pytesseract.image_to_string(gray_frame, config='--psm 6').strip()
+            
+            if ocr_text:
+                print(f"DEBUG: Raw OCR output for frame #{frame_num}: '{ocr_text}'")
+
             current_time_str = parse_time_from_ocr(ocr_text)
 
             if current_time_str:
                 current_time_seconds = time_str_to_seconds(current_time_str)
 
-                # Fluctuation check
                 if last_valid_time_seconds != -1 and abs(current_time_seconds - last_valid_time_seconds) > ocr_fluctuation_seconds:
                     print(f"WARN: OCR fluctuation detected. Read: {current_time_str}, Last Valid: {timedelta(seconds=last_valid_time_seconds)}. Skipping frame.")
                     frame_num += frame_interval
@@ -81,16 +87,14 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
                         print(f"INFO: Match found for {target} at frame {frame_num}!")
                         
                         start_time_seconds = frame_num / fps
-                        output_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_{target.replace(':', '_')}.avi"
+                        output_filename = f"{os.path.splitext(os.path.basename(normalized_video_path))[0]}_{target.replace(':', '_')}.avi"
                         output_path = os.path.join(output_folder, output_filename)
                         
-                        # FFmpeg command for high-quality trimming
                         command = [
                             'ffmpeg', '-y', '-ss', str(start_time_seconds),
-                            '-i', video_path, '-t', '00:01:00',
-                            '-c:v', 'libx264', '-preset', 'medium',
-                            '-crf', '23', '-c:a', 'aac', '-b:a', '192k',
-                            output_path
+                            '-i', normalized_video_path,
+                            '-t', '00:01:00', '-c:v', 'libx264', '-preset', 'medium',
+                            '-crf', '23', '-c:a', 'aac', '-b:a', '192k', output_path
                         ]
                         
                         print(f"INFO: Trimming 1-minute clip for {target}...")
@@ -99,9 +103,8 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
                         print(f"SUCCESS: Saved trimmed clip to {output_path}")
                         processed_targets.add(target)
             
-            # If all target times for this video have been found, we can stop processing it.
             if len(processed_targets) == len(target_times):
-                print(f"INFO: All target times found for {os.path.basename(video_path)}. Moving to next video.")
+                print(f"INFO: All target times found for {os.path.basename(normalized_video_path)}. Moving to next video.")
                 break
 
         except Exception as e:
@@ -110,3 +113,4 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
         frame_num += frame_interval
 
     cap.release()
+    print(f"INFO: Finished processing {os.path.basename(normalized_video_path)}.")
