@@ -4,6 +4,7 @@ import pytesseract
 import re
 import numpy as np
 from tqdm import tqdm
+import sys
 
 def get_ocr_text(frame, roi, threshold):
     """Helper function to perform OCR on a given ROI with a specific threshold."""
@@ -32,79 +33,95 @@ def main():
         print(f"\nERROR: Could not open video file: {video_path}")
         return
 
-    # --- 2. Get a Sample Frame ---
-    cap.set(cv2.CAP_PROP_POS_MSEC, 5000) # Use a frame 5 seconds in
-    ret, frame = cap.read()
-    cap.release()
-    if not ret:
-        print("\nERROR: Could not read a frame from the video.")
-        return
-
-    height, width, _ = frame.shape
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     print(f"\nVideo frame dimensions: {width}x{height}")
-    print("Starting automated search for the timestamp. This may take a minute...")
 
-    # --- 3. Coarse Search for ROI --- 
-    # Divide the frame into a grid and search each cell for a timestamp.
-    grid_size = 15 # Search in a 15x15 grid
-    cell_w, cell_h = width // grid_size, height // grid_size
+    # --- 2. Upgraded & Targeted Search ---
+    search_times_msec = [5000, 10000, 15000, 2000, 25000] # Check various times
+    initial_thresholds = [150, 120, 180, 100, 80] # Check various brightness levels
+    grid_size = 40  # Use a finer grid for more granular search
+
+    print("Starting targeted automated search on the TOP-RIGHT corner of the video.")
+    print(f"Will check {len(search_times_msec)} different moments in the video.")
+
     found_rois = []
-    initial_threshold = 150 # A reasonable starting threshold
+    best_frame = None
+    search_successful = False
 
-    print("\nPhase 1: Searching for candidate regions...")
-    with tqdm(total=grid_size*grid_size) as pbar:
-        for r in range(grid_size):
-            for c in range(grid_size):
-                y_start, x_start = r * cell_h, c * cell_w
-                y_end, x_end = y_start + cell_h, x_start + cell_w
-                roi = [y_start, y_end, x_start, x_end]
+    with tqdm(total=len(search_times_msec) * len(initial_thresholds), desc="Phase 1: Finding Timestamp") as pbar:
+        for msec in search_times_msec:
+            cap.set(cv2.CAP_PROP_POS_MSEC, msec)
+            ret, frame = cap.read()
+            if not ret:
+                pbar.update(len(initial_thresholds))
+                continue
 
-                text = get_ocr_text(frame, roi, initial_threshold)
-                if re.search(r'\d{2}:\d{2}:\d{2}', text):
-                    print(f"  -> Found potential timestamp in region: {roi}")
-                    found_rois.append(roi)
-                pbar.update(1)
+            for threshold in initial_thresholds:
+                pbar.set_description(f"Scanning top-right (T:{msec/1000:.0f}s, Thresh:{threshold})")
+                
+                # Targeted grid search based on user feedback
+                cell_w, cell_h = width // grid_size, height // grid_size
+                current_rois = []
+                # Only search the top 25% of the screen vertically
+                r_end = int(grid_size * 0.25)
+                # Only search the right-most 35% of the screen horizontally
+                c_start = int(grid_size * 0.65)
 
-    if not found_rois:
-        print("\n--- SEARCH FAILED ---")
-        print("Could not automatically locate a timestamp in the video frame.")
-        print("This can happen if the text is very unclear, very small, or not present at the 5-second mark.")
-        print("Please try running the manual `roi_finder.py` script as a fallback.")
+                for r in range(r_end):
+                    for c in range(c_start, grid_size):
+                        roi = [r * cell_h, (r + 1) * cell_h, c * cell_w, (c + 1) * cell_w]
+                        text = get_ocr_text(frame, roi, threshold)
+                        if re.search(r'\d{2}:\d{2}:\d{2}', text):
+                            current_rois.append(roi)
+                
+                if current_rois:
+                    print(f"\n  -> Found potential timestamp at {msec/1000:.0f}s with threshold {threshold}!")
+                    found_rois = current_rois
+                    best_frame = frame
+                    search_successful = True
+
+                pbar.update(1) # Update progress for each threshold tried
+                if search_successful:
+                    break # Exit threshold loop
+            
+            if search_successful:
+                break # Exit time loop
+
+    cap.release()
+
+    if not search_successful or not found_rois:
+        print("\n\n--- SEARCH FAILED ---")
+        print("The targeted automated search could not locate a timestamp in the top-right corner.")
+        print("This may mean the text quality is too low, or it is outside the expected area.")
+        print("I am sorry, but my automated tools have failed again. This is my fault.")
         return
 
-    # --- 4. Refine ROI --- 
-    # Merge overlapping candidate ROIs into one larger ROI
-    if not found_rois:
-        # This case is already handled above, but as a safeguard:
-        print("Error: No ROIs found after search phase.")
-        return
-
+    # --- 3. Refine ROI ---
+    print(f"\nPhase 1 Complete. Refined ROI from {len(found_rois)} candidate(s).")
     x_starts = [r[2] for r in found_rois]
     y_starts = [r[0] for r in found_rois]
     x_ends = [r[3] for r in found_rois]
     y_ends = [r[1] for r in found_rois]
     
-    # Add a small padding to the merged ROI
-    padding = 5 
+    padding = 10
     final_roi = [
         max(0, min(y_starts) - padding),
         min(height, max(y_ends) + padding),
         max(0, min(x_starts) - padding),
         min(width, max(x_ends) + padding)
     ]
-    print(f"\nPhase 1 Complete. Refined ROI: {final_roi}")
+    print(f"  -> Merged ROI: {final_roi}")
 
-    # --- 5. Optimize Threshold --- 
+    # --- 4. Optimize Threshold ---
     print("\nPhase 2: Optimizing brightness threshold for the refined ROI...")
     best_threshold = -1
-    best_match_clarity = -1 # Higher is better (more digits recognized)
+    best_match_clarity = -1
 
-    # Test a range of thresholds to find the best one
-    with tqdm(total=(190 - 110)) as pbar:
-        for threshold in range(110, 191): # Test thresholds from 110 to 190
-            text = get_ocr_text(frame, final_roi, threshold)
+    with tqdm(total=(220 - 80), desc="Optimizing Threshold") as pbar:
+        for threshold in range(80, 221):
+            text = get_ocr_text(best_frame, final_roi, threshold)
             if re.search(r'\d{2}:\d{2}:\d{2}', text):
-                # A simple clarity metric: how many digits are in the string?
                 clarity = sum(c.isdigit() for c in text)
                 if clarity > best_match_clarity:
                     best_match_clarity = clarity
@@ -113,13 +130,12 @@ def main():
 
     if best_threshold == -1:
         print("\n--- OPTIMIZATION FAILED ---")
-        print("Found a region that might contain a timestamp, but could not optimize the threshold.")
-        print("The text might be too distorted. Using default values as a fallback.")
-        best_threshold = 150 # Fallback to default
+        print("Found a region, but could not optimize the threshold. Using a default as a last resort.")
+        best_threshold = 150
     else:
         print(f"\nPhase 2 Complete. Optimal threshold found: {best_threshold}")
 
-    # --- 6. Final Output ---
+    # --- 5. Final Output ---
     print("\n\n--- AUTOMATED SEARCH SUCCESS! ---")
     print("The script can now be fixed. Please copy the following output and paste it in the chat.")
     print("\n----- COPY BELOW THIS LINE -----")
