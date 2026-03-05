@@ -8,11 +8,9 @@ import json
 from configparser import ConfigParser, NoSectionError, NoOptionError
 import pytesseract
 
-# Assuming src/app.py is in the src directory
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from app import process_video_file, time_str_to_seconds
 
-# --- Constants ---
 CONFIG_FILE = 'config.txt'
 PROCESSED_FILES_DB = 'processed_files.json'
 
@@ -21,7 +19,6 @@ def load_configuration():
     if not os.path.exists(CONFIG_FILE):
         print(f"ERROR: Configuration file '{CONFIG_FILE}' not found.")
         sys.exit(1)
-
     print(f"INFO: Loading configuration from: {os.path.abspath(CONFIG_FILE)}")
     config = ConfigParser()
     config.read(CONFIG_FILE)
@@ -31,45 +28,40 @@ def get_config_value(config, section, option, is_json=False, is_list=False, is_i
     """Safely gets a value from the config parser."""
     try:
         value = config.get(section, option)
-        if is_json:
-            return json.loads(value)
-        if is_list:
-            return [item.strip() for item in value.split(',')]
-        if is_int:
-            return int(value)
+        if is_json: return json.loads(value)
+        if is_list: return [item.strip() for item in value.split(',')]
+        if is_int: return int(value)
         return value
     except (NoSectionError, NoOptionError):
-        print(f"ERROR: '{option}' not found in section '[{section}]' of the config file.")
+        print(f"ERROR: '{option}' not found in section '[{section}]'.")
         sys.exit(1)
     except json.JSONDecodeError:
-        print(f"ERROR: Could not parse JSON value for '{option}' in section '[{section}]'.")
+        print(f"ERROR: Could not parse JSON for '{option}' in '[{section}]'.")
         sys.exit(1)
 
 def load_folder_pairs(config):
     """Loads and validates folder pairs from the configuration."""
     if not config.has_section('FOLDER_PAIRS'):
-        print("ERROR: [FOLDER_PAIRS] section is missing from the config file.")
+        print("ERROR: [FOLDER_PAIRS] section is missing.")
         sys.exit(1)
-
     folders_data = {}
-    for _, value in config.items('FOLDER_PAIRS'):
+    for key, value in config.items('FOLDER_PAIRS'):
         parts = [p.strip() for p in value.split(',')]
         if len(parts) != 2:
-            print(f"ERROR: Invalid format in [FOLDER_PAIRS]. Each line must be 'source, destination'. Problem line: {value}")
-            sys.exit(1)
-        source, destination = parts
-        folders_data[source] = destination
+            print(f"ERROR: Invalid format in [FOLDER_PAIRS] for key '{key}'.")
+            continue
+        folders_data[parts[0]] = parts[1]
     return folders_data
 
 def get_processed_files(db_path):
     """Loads the set of processed file paths from a JSON file."""
-    if not os.path.exists(db_path):
-        return set()
-    with open(db_path, 'r') as f:
-        try:
-            return set(json.load(f))
-        except json.JSONDecodeError:
-            return set()
+    try:
+        if os.path.exists(db_path):
+            with open(db_path, 'r') as f:
+                return set(json.load(f))
+    except (json.JSONDecodeError, IOError):
+        pass
+    return set()
 
 def add_to_processed_files(db_path, file_path):
     """Adds a file path to the processed files database."""
@@ -79,13 +71,12 @@ def add_to_processed_files(db_path, file_path):
         json.dump(list(processed), f, indent=4)
 
 def find_unprocessed_videos_grouped_by_day(folders_data, days_to_process, processed_files):
-    """Scans folders, finds unprocessed videos, and groups them by day."""
+    """Scans folders for new videos and groups them by day (YYYYMMDD)."""
     print(f"INFO: Searching for video files from the last {days_to_process} days...")
     videos_by_day = {}
-    today = datetime.now()
-    date_limit = today - timedelta(days=days_to_process)
+    date_limit = datetime.now() - timedelta(days=days_to_process)
 
-    for source_folder, _ in folders_data.items():
+    for source_folder in folders_data.keys():
         print(f"INFO: Scanning folder: {source_folder}")
         if not os.path.isdir(source_folder):
             print(f"WARN: Source folder not found: {source_folder}")
@@ -106,7 +97,7 @@ def find_unprocessed_videos_grouped_by_day(folders_data, days_to_process, proces
             day_str = match.group(1)
             try:
                 video_date = datetime.strptime(day_str, '%Y%m%d')
-                if video_date >= date_limit:
+                if video_date.date() >= date_limit.date():
                     if day_str not in videos_by_day:
                         videos_by_day[day_str] = []
                     videos_by_day[day_str].append(video_path)
@@ -119,11 +110,10 @@ def find_unprocessed_videos_grouped_by_day(folders_data, days_to_process, proces
     found_count = sum(len(v) for v in videos_by_day.values())
     day_count = len(videos_by_day)
     print(f"INFO: Found {found_count} new video file(s) across {day_count} day(s).")
-
     return videos_by_day
 
 def main():
-    """Main execution function."""
+    """Main execution function with turn-based, day-first processing."""
     config = load_configuration()
     
     tesseract_path = get_config_value(config, 'SETTINGS', 'TESSERACT_PATH')
@@ -138,11 +128,11 @@ def main():
         pytesseract.tesseract_cmd = tesseract_path
         print("INFO: Tesseract command path loaded successfully.")
     else:
-        print(f"WARNING: Tesseract path not set or invalid. OCR will not be available.")
+        print("WARNING: Tesseract path not set or invalid. OCR will not function.")
 
     folders_data = load_folder_pairs(config)
     if not folders_data:
-        print("ERROR: [FOLDER_PAIRS] section is empty or invalid. Please check the config file.")
+        print("ERROR: [FOLDER_PAIRS] section is empty. Exiting.")
         sys.exit(1)
 
     target_times.sort(key=time_str_to_seconds)
@@ -163,22 +153,21 @@ def main():
             sorted_days = sorted(videos_by_day.keys())
 
             if not sorted_days:
+                print(f"INFO: No new videos found. Waiting for {scan_interval} seconds...")
                 time.sleep(scan_interval)
                 continue
 
+            # --- Turn-Based, Day-First Processing Logic ---
             for day in sorted_days:
                 print(f"\n--- Processing Day: {day} ---")
                 for source_folder, output_folder_name in folders_data.items():
                     videos_in_folder_for_day = [v for v in videos_by_day.get(day, []) if os.path.dirname(v) == os.path.normpath(source_folder)]
+                    
                     if not videos_in_folder_for_day:
                         continue
                     
-                    # --- DEFINITIVE PATH FIX ---
-                    # Construct the correct absolute path for the output folder.
-                    # It is created as a sibling to the parent of the source folder.
                     parent_of_source = os.path.dirname(os.path.normpath(source_folder))
                     output_folder_path = os.path.join(parent_of_source, output_folder_name)
-                    # --- END FIX ---
 
                     print(f"--- Folder: {source_folder} ---")
                     if not os.path.exists(output_folder_path):
@@ -190,13 +179,14 @@ def main():
                         print(f"  - Source: {video_path}")
                         process_video_file(
                             video_path=video_path,
-                            output_folder=output_folder_path, # Use the corrected, absolute path
+                            output_folder=output_folder_path,
                             timestamp_roi=timestamp_roi,
                             ocr_fluctuation_seconds=ocr_fluctuation_seconds,
                             target_times=target_times,
                             debug_ocr=debug_ocr
                         )
                         add_to_processed_files(PROCESSED_FILES_DB, video_path)
+            # --- End of Processing Logic ---
 
             print(f"\nINFO: Scan complete. Waiting for {scan_interval} seconds...")
             time.sleep(scan_interval)
