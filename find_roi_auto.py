@@ -4,6 +4,7 @@ import pytesseract
 import re
 import sys
 from tqdm import tqdm
+import numpy as np
 
 def save_debug_image(frame, video_path):
     """Saves a debug image to help diagnose OCR failures."""
