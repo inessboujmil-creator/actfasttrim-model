@@ -39,9 +39,9 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     last_valid_time_seconds = -1
 
     # --- Tesseract Configuration ---
-    # PSM 7: Treat the image as a single text line.
+    # PSM 8: Treat the image as a single word.
     # Whitelist: Only look for digits and colons.
-    tesseract_config = '--psm 7 -c tessedit_char_whitelist=0123456789:'
+    tesseract_config = '--psm 8 -c tessedit_char_whitelist=0123456789:'
 
     print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
     if debug_ocr:
@@ -52,9 +52,14 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
             cv2.imwrite("debug_ocr_frame_raw.png", roi_frame)
             
             gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-            # Use ADAPTIVE thresholding which is more robust to lighting changes.
+            
+            # --- Image Pre-processing for OCR ---
+            # 1. Apply Gaussian Blur to remove noise. The (5, 5) kernel is a good starting point.
+            blurred_frame = cv2.GaussianBlur(gray_frame, (5, 5), 0)
+            
+            # 2. Use ADAPTIVE thresholding which is more robust to lighting changes.
             thresh_frame = cv2.adaptiveThreshold(
-                gray_frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                blurred_frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                 cv2.THRESH_BINARY_INV, 11, 2
             )
             
@@ -77,9 +82,14 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
         roi_frame = frame[y1:y2, x1:x2]
         
         gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-        # Use ADAPTIVE thresholding which is more robust to lighting changes.
+        
+        # --- Image Pre-processing for OCR ---
+        # 1. Apply Gaussian Blur to remove noise
+        blurred_frame = cv2.GaussianBlur(gray_frame, (5, 5), 0)
+        
+        # 2. Use ADAPTIVE thresholding
         ocr_ready_frame = cv2.adaptiveThreshold(
-            gray_frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            blurred_frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY_INV, 11, 2
         )
         
