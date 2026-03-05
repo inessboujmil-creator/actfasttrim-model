@@ -18,7 +18,8 @@ def load_configuration():
     if not os.path.exists(CONFIG_FILE):
         print(f"ERROR: Configuration file '{CONFIG_FILE}' not found.")
         sys.exit(1)
-    config = ConfigParser()
+    # Use strict=False to allow for duplicate keys if they were to occur, though the new format prevents the root cause.
+    config = ConfigParser(strict=False) 
     config.read(CONFIG_FILE)
     return config
 
@@ -42,8 +43,18 @@ def load_folder_pairs(config):
     if not config.has_section('FOLDER_PAIRS'):
         print("ERROR: [FOLDER_PAIRS] section is missing.")
         sys.exit(1)
-    # The new logic: The key is the full input path, the value is the full output path.
-    return {os.path.normpath(k): os.path.normpath(v) for k, v in config.items('FOLDER_PAIRS')}
+    
+    folders_data = {}
+    for key, value in config.items('FOLDER_PAIRS'):
+        # New parsing logic for 'key = input_path, output_path'
+        parts = [p.strip() for p in value.split(',')]
+        if len(parts) != 2:
+            print(f"ERROR: Invalid format for '{key}' in [FOLDER_PAIRS]. Should be: 'input/path, output/path'")
+            continue
+        input_path = os.path.normpath(parts[0])
+        output_path = os.path.normpath(parts[1])
+        folders_data[input_path] = output_path
+    return folders_data
 
 def get_processed_files(db_path):
     """Loads the set of processed file paths from a JSON file."""
@@ -153,7 +164,6 @@ def main():
                 print(f"\n--- Processing Global Oldest Day: {day} ---")
                 for video_path in videos_by_day[day]:
                     source_dir = os.path.normpath(os.path.dirname(video_path))
-                    # The new logic: Directly get the output path from the mapping.
                     output_folder_path = folders_data.get(source_dir)
                     
                     if not output_folder_path:
@@ -166,7 +176,7 @@ def main():
                     
                     print("\n--- Processing Video ---")
                     print(f"  - Source: {video_path}")
-                    process_video_file(
+                    process__video_file(
                         video_path=video_path,
                         output_folder=output_folder_path,
                         timestamp_roi=timestamp_roi,

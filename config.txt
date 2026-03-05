@@ -26,7 +26,7 @@ DEBUG_OCR = false
 
 [FOLDER_PAIRS]
 # This section maps a full input folder path to a full output folder path.
-# The backslashes in the paths must be escaped (e.g., C:\Folder\Path)
-E:\Records\Record Plan\Ch1_CAM01 = E:\Records\Record Plan\Trimmed_CAM01
-E:\Records\Record Plan\Ch1_CAM02 = E:\Records\Record Plan\Trimmed_CAM02
+# Format: unique_key = full\path\to\input, full\path\to\output
+pair_1 = E:\Records\Record Plan\Ch1_CAM01, E:\Records\Record Plan\Trimmed_CAM01
+pair_2 = E:\Records\Record Plan\Ch1_CAM02, E:\Records\Record Plan\Trimmed_CAM02
 
