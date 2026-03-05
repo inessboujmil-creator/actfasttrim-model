@@ -14,9 +14,6 @@ OCR_THRESHOLD = 190
 # The maximum number of seconds allowed for the OCR time to jump forward.
 OCR_FLUCTUATION_SECONDS = 300
 
-# The number of past days to scan for new video files.
-DAYS_TO_PROCESS = 7
-
 # A comma-separated list of target times in HH:MM:SS format to find and trim.
 TARGET_TIMES = 00:30:00, 01:30:00, 02:30:00, 03:30:00, 04:30:00, 05:30:00, 06:30:00, 08:30:00, 09:45:00, 10:45:00, 13:00:00, 14:00:00, 16:00:00, 17:45:00, 20:30:00, 21:30:00, 22:30:00, 23:30:00
 
