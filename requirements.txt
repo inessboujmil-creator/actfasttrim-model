@@ -1,12 +1,3 @@
-# Dev environment
-pip
-autopep8
-
-# App
-flask
-opencv-python-headless
+opencv-python
 pytesseract
-Pillow
 imageio-ffmpeg
-numpy
-tqdm
