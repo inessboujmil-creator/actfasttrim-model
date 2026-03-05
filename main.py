@@ -157,11 +157,10 @@ def main():
                 time.sleep(scan_interval)
                 continue
 
-            # --- Turn-Based, Day-First Processing Logic ---
             for day in sorted_days:
                 print(f"\n--- Processing Day: {day} ---")
                 for source_folder, output_folder_name in folders_data.items():
-                    videos_in_folder_for_day = [v for v in videos_by_day.get(day, []) if os.path.dirname(v) == os.path.normpath(source_folder)]
+                    videos_in_folder_for_day = [v for v in videos_by_day.get(day, []) if os.path.normpath(os.path.dirname(v)) == os.path.normpath(source_folder)]
                     
                     if not videos_in_folder_for_day:
                         continue
@@ -186,7 +185,6 @@ def main():
                             debug_ocr=debug_ocr
                         )
                         add_to_processed_files(PROCESSED_FILES_DB, video_path)
-            # --- End of Processing Logic ---
 
             print(f"\nINFO: Scan complete. Waiting for {scan_interval} seconds...")
             time.sleep(scan_interval)
