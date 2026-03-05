@@ -19,21 +19,24 @@ def time_str_to_seconds(time_str):
     return h * 3600 + m * 60 + s
 
 def get_ocr_ready_frame(roi_frame):
-    """Applies a robust image processing pipeline to prepare a frame for OCR."""
-    # 1. Resize for clarity (2x scaling with high-quality interpolation)
-    height, width = roi_frame.shape[:2]
-    resized_frame = cv2.resize(roi_frame, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
+    """Applies a definitive, multi-stage image processing pipeline for difficult OCR."""
+    # 1. Convert to grayscale
+    gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
-    # 2. Convert to grayscale
-    gray_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
+    # 2. Apply a bilateral filter to reduce noise while preserving edges
+    blurred = cv2.bilateralFilter(gray, 9, 75, 75)
 
-    # 3. Denoise the image
-    denoised_frame = cv2.fastNlMeansDenoising(gray_frame, None, h=10, templateWindowSize=7, searchWindowSize=21)
+    # 3. Apply adaptive thresholding
+    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
 
-    # 4. Apply Otsu's thresholding to get black text on a white background
-    _, ocr_ready_frame = cv2.threshold(denoised_frame, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # 4. Invert the image - Tesseract often prefers black text on a white background
+    inverted = cv2.bitwise_not(thresh)
 
-    return ocr_ready_frame
+    # 5. Use morphological closing to connect broken parts of characters
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    closing = cv2.morphologyEx(inverted, cv2.MORPH_CLOSE, kernel)
+
+    return closing
 
 def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation_seconds, target_times, debug_ocr=False):
     """
@@ -56,9 +59,8 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     last_valid_time_seconds = -1
 
     # --- Tesseract Configuration ---
-    # OEM 3: Default, LSTM-based engine.
-    # PSM 6: Assume a single uniform block of text.
-    tesseract_config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:'
+    # PSM 7: Treat the image as a single text line.
+    tesseract_config = '--psm 7 -c tessedit_char_whitelist=0123456789:'
 
     print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
     if debug_ocr:
