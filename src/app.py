@@ -18,6 +18,23 @@ def time_str_to_seconds(time_str):
     h, m, s = map(int, time_str.split(':'))
     return h * 3600 + m * 60 + s
 
+def get_ocr_ready_frame(roi_frame):
+    """Applies a robust image processing pipeline to prepare a frame for OCR."""
+    # 1. Resize for clarity (2x scaling with high-quality interpolation)
+    height, width = roi_frame.shape[:2]
+    resized_frame = cv2.resize(roi_frame, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
+
+    # 2. Convert to grayscale
+    gray_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
+
+    # 3. Denoise the image
+    denoised_frame = cv2.fastNlMeansDenoising(gray_frame, None, h=10, templateWindowSize=7, searchWindowSize=21)
+
+    # 4. Apply Otsu's thresholding to get black text on a white background
+    _, ocr_ready_frame = cv2.threshold(denoised_frame, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    return ocr_ready_frame
+
 def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation_seconds, target_times, debug_ocr=False):
     """
     Processes a single video file to find target timestamps via OCR and trim one-minute clips.
@@ -39,9 +56,9 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
     last_valid_time_seconds = -1
 
     # --- Tesseract Configuration ---
+    # OEM 3: Default, LSTM-based engine.
     # PSM 6: Assume a single uniform block of text.
-    # Whitelist: Only look for digits and colons.
-    tesseract_config = '--psm 6 -c tessedit_char_whitelist=0123456789:'
+    tesseract_config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:'
 
     print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
     if debug_ocr:
@@ -51,17 +68,10 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
             roi_frame = frame[y1:y2, x1:x2]
             cv2.imwrite("debug_ocr_frame_raw.png", roi_frame)
             
-            # --- Definitive Image Pre-processing for OCR ---
-            gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-            blurred_frame = cv2.GaussianBlur(gray_frame, (3, 3), 0)
-            thresh_frame = cv2.adaptiveThreshold(blurred_frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+            processed_frame_for_debug = get_ocr_ready_frame(roi_frame)
             
-            # FINAL STEP: Use Morphological Opening to remove small noise artifacts
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2,2))
-            opened_frame = cv2.morphologyEx(thresh_frame, cv2.MORPH_OPEN, kernel)
-
             debug_filename = "debug_ocr_frame_processed.png"
-            cv2.imwrite(debug_filename, opened_frame)
+            cv2.imwrite(debug_filename, processed_frame_for_debug)
             print(f"INFO: DEBUG_OCR is True. Saved RAW and PROCESSED timestamp ROI to debug files.")
 
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -77,15 +87,7 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_fluctuation
             break
 
         roi_frame = frame[y1:y2, x1:x2]
-        
-        # --- Definitive Image Pre-processing for OCR ---
-        gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-        blurred_frame = cv2.GaussianBlur(gray_frame, (3, 3), 0)
-        thresh_frame = cv2.adaptiveThreshold(blurred_frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-        
-        # FINAL STEP: Use Morphological Opening to remove small noise artifacts
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2,2))
-        ocr_ready_frame = cv2.morphologyEx(thresh_frame, cv2.MORPH_OPEN, kernel)
+        ocr_ready_frame = get_ocr_ready_frame(roi_frame)
         
         try:
             ocr_text = pytesseract.image_to_string(ocr_ready_frame, config=tesseract_config).strip()
