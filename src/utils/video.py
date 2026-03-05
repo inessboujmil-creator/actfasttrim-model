@@ -31,26 +31,27 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_threshold, 
     previous_time_obj = None
     tesseract_config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:'
     
-    frame_interval = int(fps) # We will process one frame per second of video
+    frame_interval = int(fps)
     current_frame_index = 0
 
     while cap.isOpened():
-        ret, frame = cap.read() # Read the next frame sequentially
+        ret, frame = cap.read()
         if not ret:
-            break # End of video
+            break
 
-        # Only process frames at the specified interval (e.g., once per second)
         if current_frame_index % frame_interval == 0:
-            
             seconds_into_video = current_frame_index / fps
-            print(f"  -> Analyzing frame {current_frame_index} ({seconds_into_video:.2f}s)...", end='\r')
-
             roi_frame = frame[y1:y2, x1:x2]
             ocr_ready_frame = get_ocr_ready_frame(roi_frame, ocr_threshold)
             
             try:
                 ocr_text = pytesseract.image_to_string(ocr_ready_frame, config=tesseract_config).strip()
                 current_time_str = parse_time_from_ocr(ocr_text)
+                
+                # --- New, more informative logging --- #
+                ocr_display = current_time_str if current_time_str else "No time found"
+                print(f"  -> Scanning at {seconds_into_video:.2f}s... | OCR Time: {ocr_display}      ", end='\r')
+
                 current_time_obj = time_str_to_time_obj(current_time_str)
 
                 if current_time_obj:
@@ -73,7 +74,6 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_threshold, 
                                 output_path = os.path.join(output_folder, output_filename)
                                 
                                 trim_video_with_reencode(normalized_video_path, output_path, start_seconds, 60)
-
                                 processed_targets.add(str(target_obj))
                     
                     previous_time_obj = current_time_obj
@@ -87,7 +87,7 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_threshold, 
         
         current_frame_index += 1
 
-    print() # Newline after the carriage return prints
+    print() 
     cap.release()
 
 def check_time_interval(prev_time, curr_time, fluctuation_seconds):
@@ -101,11 +101,9 @@ def check_time_interval(prev_time, curr_time, fluctuation_seconds):
             delta_seconds += 86400
         else:
             is_valid = False
-            # print(f"WARN: OCR fluctuation. Time jumped backward from {prev_time} to {curr_time}. Skipping.")
 
     if abs(delta_seconds) > fluctuation_seconds and not is_midnight_cross:
          is_valid = False
-         # print(f"WARN: OCR fluctuation. Time jumped too far from {prev_time} to {curr_time}. Skipping.")
     
     return is_valid, is_midnight_cross
 
@@ -116,9 +114,6 @@ def has_crossed_target(prev_time, curr_time, target_time, is_midnight_cross):
         return prev_time < target_time <= curr_time
 
 def trim_video_with_reencode(input_path, output_path, start_time, duration):
-    """
-    Trims a video using a reliable re-encoding FFmpeg call.
-    """
     try:
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         command = [
@@ -127,7 +122,7 @@ def trim_video_with_reencode(input_path, output_path, start_time, duration):
             '-c:a', 'aac', output_path
         ]
         
-        print(f"INFO: Trimming 1-minute clip for {os.path.basename(output_path)}... (Re-encoding for reliability)")
+        print(f"\nINFO: Trimming 1-minute clip for {os.path.basename(output_path)}... (Re-encoding for reliability)")
         result = subprocess.run(command, check=True, capture_output=True, text=True)
         print(f"SUCCESS: Saved trimmed clip to {output_path}")
 
