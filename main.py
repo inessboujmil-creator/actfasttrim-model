@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import re
 import json
 from configparser import ConfigParser, NoSectionError, NoOptionError
+import pytesseract
 
 # Assuming src/app.py is in the src directory
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -138,7 +139,7 @@ def main():
 
     # Set Tesseract command path
     if os.path.exists(tesseract_path):
-        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        pytesseract.tesseract_cmd = tesseract_path
         print("INFO: Tesseract command path loaded successfully.")
     else:
         print(f"WARNING: Tesseract path not set or invalid. OCR will not be available.")
@@ -208,6 +209,4 @@ def main():
         print("System shut down.")
 
 if __name__ == "__main__":
-    # This is required for pytesseract to be imported correctly from the app module
-    from pytesseract import pytesseract
     main()
