@@ -33,7 +33,7 @@ def process_video_file(video_path, output_folder, timestamp_roi, ocr_threshold, 
 
     print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
     if debug_ocr:
-        # ... (debug block remains the same)
+        pass
 
     frame_interval = int(fps)
     frame_num = 0
