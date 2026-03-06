@@ -7,7 +7,7 @@ import pytesseract
 
 from .ocr import extract_time_from_frame, find_timestamp_in_video, time_str_to_seconds
 
-def process_video_file(video_path, output_folder, target_times, ocr_threshold, debug_ocr=False):
+def process_video_file(video_path, output_folder, target_times, timestamp_roi, ocr_threshold, debug_ocr=False):
     """
     Processes a single video file to find and trim clips at target times.
 
@@ -15,6 +15,7 @@ def process_video_file(video_path, output_folder, target_times, ocr_threshold, d
         video_path (str): The full path to the video file.
         output_folder (str): The folder where trimmed clips will be saved.
         target_times (list): A list of HH:MM:SS strings to search for.
+        timestamp_roi (list): The [y_start, y_end, x_start, x_end] of the timestamp.
         ocr_threshold (int): The grayscale threshold for OCR.
         debug_ocr (bool): If True, saves processed timestamp images for debugging.
     """
@@ -41,6 +42,7 @@ def process_video_file(video_path, output_folder, target_times, ocr_threshold, d
         timestamp_seconds, frame_number = find_timestamp_in_video(
             cap, 
             target_seconds, 
+            timestamp_roi, 
             ocr_threshold,
             debug_ocr
         )

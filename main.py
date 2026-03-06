@@ -117,6 +117,7 @@ def main():
         folders_data = get_config_value(config, 'Folders', 'folder_pairs', is_json=True)
         target_times = get_config_value(config, 'Trimming', 'target_times', is_list=True)
         ocr_threshold = get_config_value(config, 'Trimming', 'ocr_threshold', is_int=True)
+        timestamp_roi = get_config_value(config, 'Trimming', 'timestamp_roi', is_json=True)
         scan_interval = get_config_value(config, 'System', 'scan_interval_seconds', is_int=True)
         debug_ocr = config.getboolean('System', 'debug_ocr', fallback=False)
 
@@ -166,6 +167,7 @@ def main():
                         normalized_path, 
                         output_folder, 
                         target_times, 
+                        timestamp_roi,
                         ocr_threshold,
                         debug_ocr
                     )
