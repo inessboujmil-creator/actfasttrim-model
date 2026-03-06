@@ -88,7 +88,29 @@ def cleanup_processed_files(db_path, processed_files, all_source_folders):
     """
     return processed_files
 
-def find_all_unprocessed_videos(folders_data, processed_files):
+def is_file_stable(file_path, wait_seconds=5):
+    """
+    Checks if a file is stable by verifying its size doesn't change over a short period.
+    """
+    if not os.path.exists(file_path):
+        return False
+    try:
+        initial_size = os.path.getsize(file_path)
+        if initial_size == 0:
+            print(f"WARN: File '{os.path.basename(file_path)}' is empty. Skipping.")
+            return False
+        time.sleep(wait_seconds)
+        current_size = os.path.getsize(file_path)
+        if initial_size == current_size:
+            return True
+        else:
+            print(f"WARN: File '{os.path.basename(file_path)}' is still growing. Will check again next scan.")
+            return False
+    except OSError as e:
+        print(f"ERROR: Could not access file '{file_path}': {e}")
+        return False
+
+def find_all_unprocessed_videos(folders_data, processed_files, stability_wait):
     """Scans all folders and returns a flat list of all unprocessed video file paths."""
     unprocessed_videos = []
 
@@ -103,6 +125,10 @@ def find_all_unprocessed_videos(folders_data, processed_files):
 
             video_path = os.path.normpath(os.path.join(source_folder, filename))
             if video_path in processed_files:
+                continue
+            
+            # Check if the file is stable before adding it to the list
+            if not is_file_stable(video_path, wait_seconds=stability_wait):
                 continue
 
             if re.search(r'(\d{8})', filename):
@@ -144,6 +170,13 @@ def main():
     except (NoOptionError, NoSectionError):
         scan_interval = 7200
         print(f"INFO: 'SCAN_INTERVAL_SECONDS' not in config. Defaulting to {scan_interval} seconds (2 hours).")
+        
+    try:
+        stability_wait = config.getint('SETTINGS', 'STABILITY_CHECK_SECONDS')
+    except (NoOptionError, NoSectionError):
+        stability_wait = 5
+        print(f"INFO: 'STABILITY_CHECK_SECONDS' not in config. Defaulting to {stability_wait} seconds.")
+
 
     if os.path.exists(tesseract_path):
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
@@ -165,7 +198,7 @@ def main():
             processed_files = get_processed_files(PROCESSED_FILES_DB)
             processed_files = cleanup_processed_files(PROCESSED_FILES_DB, processed_files, folders_data.keys())
             
-            all_new_videos = find_all_unprocessed_videos(folders_data, processed_files)
+            all_new_videos = find_all_unprocessed_videos(folders_data, processed_files, stability_wait)
 
             if not all_new_videos:
                 print("INFO: No new videos found.")
