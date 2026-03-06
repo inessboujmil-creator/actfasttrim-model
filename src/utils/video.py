@@ -1,84 +1,162 @@
-import cv2
 import os
-import sys
-import numpy as np
-from datetime import datetime, timedelta
+import subprocess
+import cv2
 import pytesseract
+from datetime import datetime
+import imageio_ffmpeg
 
-from .ocr import extract_time_from_frame, find_timestamp_in_video, time_str_to_seconds
+from .ocr import get_ocr_ready_frame, parse_time_from_ocr, time_str_to_time_obj
 
-def process_video_file(video_path, output_folder, target_times, timestamp_roi, ocr_threshold, debug_ocr=False):
+def find_frame_by_binary_search(cap, target_time_obj, timestamp_roi, ocr_threshold, total_frames, fps, debug_ocr=False):
     """
-    Processes a single video file to find and trim clips at target times.
-
-    Args:
-        video_path (str): The full path to the video file.
-        output_folder (str): The folder where trimmed clips will be saved.
-        target_times (list): A list of HH:MM:SS strings to search for.
-        timestamp_roi (list): The [y_start, y_end, x_start, x_end] of the timestamp.
-        ocr_threshold (int): The grayscale threshold for OCR.
-        debug_ocr (bool): If True, saves processed timestamp images for debugging.
+    Finds the frame index closest to the target time using a binary search.
     """
-    print(f"\n--- Processing Video ---")
-    print(f"  - Source: {video_path}")
+    low = 0
+    high = total_frames - 1
+    best_frame_index = -1
+    tesseract_config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:' 
+    y1, y2, x1, x2 = timestamp_roi
 
-    cap = cv2.VideoCapture(video_path)
+    print(f"  -> Searching for {target_time_obj.strftime('%H:%M:%S')}...")
+
+    while low <= high:
+        mid = (low + high) // 2
+        cap.set(cv2.CAP_PROP_POS_FRAMES, mid)
+        ret, frame = cap.read()
+        if not ret:
+            high = mid -1
+            continue
+
+        roi_frame = frame[y1:y2, x1:x2]
+        ocr_ready_frame = get_ocr_ready_frame(roi_frame, ocr_threshold)
+        
+        try:
+            ocr_text = pytesseract.image_to_string(ocr_ready_frame, config=tesseract_config).strip()
+            current_time_str = parse_time_from_ocr(ocr_text)
+            current_time_obj = time_str_to_time_obj(current_time_str)
+
+            if current_time_obj:
+                # Check if current time is within a reasonable range of the target
+                time_diff = (datetime.combine(datetime.min, current_time_obj) - datetime.combine(datetime.min, target_time_obj)).total_seconds()
+                
+                # If we are very close (e.g., within the search interval), start linear scan
+                if abs(time_diff) < 60: # If within 1 minute, we are close enough
+                    best_frame_index = mid
+                    break
+
+                if current_time_obj < target_time_obj:
+                    low = mid + 1
+                else:
+                    high = mid - 1
+            else: # If OCR fails, we can't make a decision, so we shrink the search space
+                high = mid - 1
+        except Exception:
+            high = mid - 1
+            
+    # After binary search, we do a short linear scan from the 'best_frame_index'
+    if best_frame_index != -1:
+        start_scan_frame = max(0, best_frame_index - int(fps * 60)) # Scan 1 minute before
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_scan_frame)
+        
+        previous_time_obj = None
+        for i in range(int(fps * 120)): # Scan up to 2 minutes
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            current_frame_index = start_scan_frame + i
+            seconds_into_video = current_frame_index / fps
+            roi_frame = frame[y1:y2, x1:x2]
+            ocr_ready_frame = get_ocr_ready_frame(roi_frame, ocr_threshold)
+            ocr_text = pytesseract.image_to_string(ocr_ready_frame, config=tesseract_config).strip()
+            current_time_str = parse_time_from_ocr(ocr_text)
+            current_time_obj = time_str_to_time_obj(current_time_str)
+
+            if current_time_obj:
+                if previous_time_obj:
+                    is_valid, is_midnight = check_time_interval(previous_time_obj, current_time_obj, 300)
+                    if is_valid and has_crossed_target(previous_time_obj, current_time_obj, target_time_obj, is_midnight):
+                        return current_frame_index
+
+                previous_time_obj = current_time_obj
+    return -1
+
+
+def process_video_file(video_path, output_folder, timestamp_roi, ocr_threshold, ocr_fluctuation_seconds, target_times, debug_ocr=False):
+    """
+    Processes a single video file using a binary search for each target time.
+    """
+    normalized_video_path = os.path.normpath(video_path)
+    cap = cv2.VideoCapture(normalized_video_path)
     if not cap.isOpened():
-        print(f"ERROR: Cannot open video file: {video_path}")
+        print(f"ERROR: Could not open video file: {normalized_video_path}")
         return
 
     fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps == 0:
-        print(f"ERROR: Video FPS is zero for {video_path}. Skipping.")
-        cap.release()
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if fps == 0 or total_frames == 0:
+        print(f"ERROR: Could not get FPS or total frames for video: {normalized_video_path}. Skipping.")
         return
 
-    print(f"INFO: Processing {os.path.basename(video_path)} with FPS: {fps:.2f}")
+    print(f"INFO: Processing {os.path.basename(normalized_video_path)} with FPS: {fps:.2f}")
 
-    for target_time_str in target_times:
-        print(f"  -> Searching for {target_time_str}...")
+    target_time_objs = sorted([time_str_to_time_obj(t) for t in target_times if time_str_to_time_obj(t) is not None])
+    
+    for target_obj in target_time_objs:
+        found_frame = find_frame_by_binary_search(cap, target_obj, timestamp_roi, ocr_threshold, total_frames, fps, debug_ocr)
         
-        target_seconds = time_str_to_seconds(target_time_str)
-        timestamp_seconds, frame_number = find_timestamp_in_video(
-            cap, 
-            target_seconds, 
-            timestamp_roi, 
-            ocr_threshold,
-            debug_ocr
-        )
-
-        if timestamp_seconds is not None:
-            print(f"INFO: Match found for {target_time_str}!")
-            
-            base_filename = os.path.splitext(os.path.basename(video_path))[0]
-            time_str_safe = target_time_str.replace(':', '_')
-            output_filename = f"{base_filename}_{time_str_safe}.mp4"
+        if found_frame != -1:
+            print(f"\nINFO: Match found for {target_obj.strftime('%H:%M:%S')}!")
+            start_seconds = found_frame / fps
+            output_filename = f"{os.path.splitext(os.path.basename(normalized_video_path))[0]}_{target_obj.strftime('%H_%M_%S')}.mp4"
             output_path = os.path.join(output_folder, output_filename)
             
-            trim_video_clip(video_path, output_path, frame_number, fps)
+            trim_video_with_reencode(normalized_video_path, output_path, start_seconds, 60)
         else:
-            print(f"  -> Target {target_time_str} not found in video.")
-    
+            print(f"  -> Target {target_obj.strftime('%H:%M:%S')} not found in video.")
+
     cap.release()
+    print()
 
-def trim_video_clip(video_path, output_path, start_frame, fps, duration_seconds=60):
-    """Trims a 1-minute clip from a video starting from a specific frame and re-encodes it."""
-    print(f"INFO: Trimming 1-minute clip for {os.path.basename(output_path)}... (Re-encoding for reliability)")
+def check_time_interval(prev_time, curr_time, fluctuation_seconds):
+    is_valid = True
+    is_midnight_cross = False
+    delta_seconds = (datetime.combine(datetime.min, curr_time) - datetime.combine(datetime.min, prev_time)).total_seconds()
 
-    start_time_seconds = start_frame / fps
-
-    # Use ffmpeg for reliable trimming and re-encoding
-    ffmpeg_command = (
-        f'ffmpeg -y -ss {start_time_seconds} -i "{video_path}" '
-        f'-t {duration_seconds} -c:v libx264 -preset fast -crf 22 -c:a aac -b:a 128k "{output_path}"'
-    )
-
-    try:
-        # os.system is used for simplicity; for production, subprocess is better
-        result = os.system(ffmpeg_command)
-        if result == 0:
-            print(f"SUCCESS: Saved trimmed clip to {output_path}")
+    if delta_seconds < 0:
+        if prev_time.hour == 23 and curr_time.hour == 0:
+            is_midnight_cross = True
+            delta_seconds += 86400
         else:
-            print(f"ERROR: FFmpeg command failed with exit code {result}. Clip may not have been saved.")
-    except Exception as e:
-        print(f"ERROR: An exception occurred during trimming: {e}")
+            is_valid = False
+
+    if abs(delta_seconds) > fluctuation_seconds and not is_midnight_cross:
+         is_valid = False
+    
+    return is_valid, is_midnight_cross
+
+def has_crossed_target(prev_time, curr_time, target_time, is_midnight_cross):
+    if is_midnight_cross:
+        return target_time > prev_time or target_time <= curr_time
+    else:
+        return prev_time < target_time <= curr_time
+
+def trim_video_with_reencode(input_path, output_path, start_time, duration):
+    try:
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        command = [
+            ffmpeg_exe, '-y', '-ss', str(start_time), '-i', input_path,
+            '-t', str(duration), '-c:v', 'libx264', '-preset', 'medium',
+            '-c:a', 'aac', output_path
+        ]
+        
+        print(f"\nINFO: Trimming 1-minute clip for {os.path.basename(output_path)}... (Re-encoding for reliability)")
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        print(f"SUCCESS: Saved trimmed clip to {output_path}")
+
+    except subprocess.CalledProcessError as e:
+        print("\n--- FFMPEG ERROR ---")
+        print(f"Command failed with exit code {e.returncode} when creating {output_path}")
+        print("STDERR:", e.stderr)
+    except FileNotFoundError:
+        print("[ERROR] ffmpeg executable not found via imageio-ffmpeg. Please ensure ffmpeg is installed.")

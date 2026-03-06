@@ -1,4 +1,3 @@
-
 import sys
 import os
 import time
@@ -9,7 +8,7 @@ from configparser import ConfigParser, NoSectionError, NoOptionError
 import pytesseract
 
 from src.utils.video import process_video_file
-from src.utils.ocr import time_str_to_seconds
+from src.utils.ocr import time_str_to_time_obj # Changed import
 
 CONFIG_FILE = 'config.txt'
 PROCESSED_FILES_DB = 'processed_files.json'
@@ -116,15 +115,17 @@ def main():
         pytesseract.pytesseract.tesseract_cmd = get_config_value(config, 'System', 'tesseract_path')
         folders_data = get_config_value(config, 'Folders', 'folder_pairs', is_json=True)
         target_times = get_config_value(config, 'Trimming', 'target_times', is_list=True)
-        ocr_threshold = get_config_value(config, 'Trimming', 'ocr_threshold', is_int=True)
         timestamp_roi = get_config_value(config, 'Trimming', 'timestamp_roi', is_json=True)
+        ocr_threshold = get_config_value(config, 'Trimming', 'ocr_threshold', is_int=True)
+        ocr_fluctuation_seconds = get_config_value(config, 'Trimming', 'ocr_fluctuation_seconds', is_int=True)
         scan_interval = get_config_value(config, 'System', 'scan_interval_seconds', is_int=True)
         debug_ocr = config.getboolean('System', 'debug_ocr', fallback=False)
 
     except SystemExit:
         return
 
-    target_times.sort(key=time_str_to_seconds)
+    # Sort target times chronologically
+    target_times.sort(key=lambda t: time_str_to_time_obj(t))
 
     print("\n--- Automated Video Processing System (Continuous Monitoring) ---")
     print(f"Scanning {len(folders_data)} folder pair(s) every {scan_interval} seconds.")
@@ -164,12 +165,13 @@ def main():
                         print(f"INFO: Created output folder: {output_folder}")
 
                     process_video_file(
-                        normalized_path, 
-                        output_folder, 
-                        target_times, 
-                        timestamp_roi,
-                        ocr_threshold,
-                        debug_ocr
+                        video_path=normalized_path, 
+                        output_folder=output_folder, 
+                        timestamp_roi=timestamp_roi,
+                        ocr_threshold=ocr_threshold,
+                        ocr_fluctuation_seconds=ocr_fluctuation_seconds,
+                        target_times=target_times,
+                        debug_ocr=debug_ocr
                     )
                     
                     processed_files.add(normalized_path)
