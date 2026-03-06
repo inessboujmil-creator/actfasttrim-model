@@ -18,7 +18,6 @@ def load_configuration():
     if not os.path.exists(CONFIG_FILE):
         print(f"ERROR: Configuration file '{CONFIG_FILE}' not found.")
         sys.exit(1)
-    # Allow for keys without values
     config = ConfigParser(allow_no_value=True, strict=False)
     config.read(CONFIG_FILE)
     return config
@@ -27,59 +26,59 @@ def get_config_value(config, section, option, is_json=False, is_list=False, is_i
     """Safely gets a value from the config parser."""
     try:
         value = config.get(section, option)
-        if is_json:
-            # The value from config is a string, so we need to parse it as JSON
-            return json.loads(value)
-        if is_list:
-            return [item.strip() for item in value.split(',')]
-        if is_int:
-            return int(value)
+        if is_json: return json.loads(value)
+        if is_list: return [item.strip() for item in value.split(',')]
+        if is_int: return int(value)
         return value
     except (NoSectionError, NoOptionError):
-        print(f"ERROR: Missing '{option}' in section '[{section}]' of the config file.")
+        print(f"ERROR: '{option}' not found in section '[{section}]'. Please check your config.txt.")
         sys.exit(1)
     except json.JSONDecodeError:
-        print(f"ERROR: Invalid JSON format for '{option}' in section '[{section}]'. Expected format: [num, num, num, num]")
+        print(f"ERROR: Could not parse JSON for '{option}' in '[{section}]'.")
         sys.exit(1)
 
-def get_folder_pairs(config):
-    """Parses the [FOLDER_PAIRS] section of the config file."""
-    folder_pairs = {}
-    try:
-        for key, value in config.items('FOLDER_PAIRS'):
-            # The value is expected to be 'input_path, output_path'
-            paths = [p.strip() for p in value.split(',')]
-            if len(paths) == 2:
-                source_folder, output_folder = paths
-                # Normalize path for consistent matching later
-                folder_pairs[os.path.normpath(source_folder)] = os.path.normpath(output_folder)
-            else:
-                print(f"WARN: Skipping invalid folder pair entry: {key}={value}")
-        if not folder_pairs:
-            print("ERROR: No valid folder pairs found in [FOLDER_PAIRS] section.")
-            sys.exit(1)
-        return folder_pairs
-    except NoSectionError:
-        print("ERROR: Missing [FOLDER_PAIRS] section in the config file.")
+def load_folder_pairs(config):
+    """Loads and validates folder pairs from the configuration."""
+    if not config.has_section('FOLDER_PAIRS'):
+        print("ERROR: [FOLDER_PAIRS] section is missing from config.txt.")
         sys.exit(1)
+    
+    folders_data = {}
+    for key, value in config.items('FOLDER_PAIRS'):
+        if not value:
+            print(f"WARN: Skipping empty value for key '{key}' in [FOLDER_PAIRS].")
+            continue
+        parts = [p.strip() for p in value.split(',')]
+        if len(parts) != 2:
+            print(f"ERROR: Invalid format for '{key}' in [FOLDER_PAIRS]. Should be: 'C:\\input\\path, C:\\output\\path'")
+            continue
+        input_path = os.path.normpath(parts[0])
+        output_path = os.path.normpath(parts[1])
+        folders_data[input_path] = output_path
+    
+    if not folders_data:
+        print("ERROR: No valid folder pairs found in [FOLDER_PAIRS]. Exiting.")
+        sys.exit(1)
+    return folders_data
 
 def get_processed_files(db_path):
-    """Loads the set of processed file paths from the database."""
-    try:
-        if os.path.exists(db_path):
-            with open(db_path, 'r') as f:
-                return set(json.load(f))
-    except (IOError, json.JSONDecodeError):
+    """Loads the set of processed file paths from a JSON file."""
+    if not os.path.exists(db_path):
         return set()
-    return set()
+    try:
+        with open(db_path, 'r') as f:
+            return set(json.load(f))
+    except (json.JSONDecodeError, IOError):
+        print(f"WARN: Could not read or parse '{db_path}'. Starting with an empty list of processed files.")
+        return set()
 
-def save_processed_files(db_path, processed_files):
+def save_processed_files(db_path, processed_set):
     """Saves the set of processed file paths to the database."""
     try:
         with open(db_path, 'w') as f:
-            json.dump(list(processed_files), f, indent=4)
-    except IOError:
-        print(f"WARN: Could not write to processed files database: {db_path}")
+            json.dump(list(processed_set), f, indent=4)
+    except IOError as e:
+        print(f"WARN: Could not write to processed files database '{db_path}': {e}")
 
 def cleanup_processed_files(db_path, processed_files, all_source_folders):
     """Removes records of files that no longer exist in source folders."""
@@ -87,27 +86,31 @@ def cleanup_processed_files(db_path, processed_files, all_source_folders):
     for folder in all_source_folders:
         if os.path.isdir(folder):
             for filename in os.listdir(folder):
-                existing_files.add(os.path.join(folder, filename))
+                existing_files.add(os.path.normpath(os.path.join(folder, filename)))
 
-    cleaned_files = processed_files.intersection(existing_files)
-    if len(cleaned_files) < len(processed_files):
-        print(f"INFO: Cleaned up {len(processed_files) - len(cleaned_files)} deleted video(s) from the processed files list.")
-        save_processed_files(db_path, cleaned_files)
-    return cleaned_files
+    cleaned_set = processed_files.intersection(existing_files)
+    
+    if len(cleaned_set) < len(processed_files):
+        removed_count = len(processed_files) - len(cleaned_set)
+        print(f"INFO: Cleaned up {removed_count} deleted video(s) from the processed files list.")
+        save_processed_files(db_path, cleaned_set)
+    
+    return cleaned_set
 
 def find_all_unprocessed_videos(folders_data, processed_files):
-    """Finds all video files in the source folders that have not been processed yet."""
+    """Scans all folders and returns a flat list of all unprocessed video file paths."""
     unprocessed_videos = []
+
     for source_folder in folders_data.keys():
         if not os.path.isdir(source_folder):
-            print(f"WARN: Source folder not found: {source_folder}")
+            print(f"WARN: Source folder not found, skipping: {source_folder}")
             continue
-
+        
         for filename in os.listdir(source_folder):
             if not filename.lower().endswith(('.mp4', '.avi')):
                 continue
 
-            video_path = os.path.join(source_folder, filename)
+            video_path = os.path.normpath(os.path.join(source_folder, filename))
             if video_path in processed_files:
                 continue
 
@@ -119,56 +122,58 @@ def find_all_unprocessed_videos(folders_data, processed_files):
     return unprocessed_videos
 
 def group_videos_by_day(video_paths):
-    """Groups videos by the day (YYYYMMDD) found in their filenames."""
+    """Groups a list of video paths into a dictionary keyed by day (YYYYMMDD)."""
     videos_by_day = {}
     for path in video_paths:
         match = re.search(r'(\d{8})', os.path.basename(path))
         if match:
-            day = match.group(1)
-            if day not in videos_by_day:
-                videos_by_day[day] = []
-            videos_by_day[day].append(path)
+            day_str = match.group(1)
+            if day_str not in videos_by_day:
+                videos_by_day[day_str] = []
+            videos_by_day[day_str].append(path)
+    
+    for day in videos_by_day:
+        videos_by_day[day].sort()
     return videos_by_day
 
 def main():
-    """Main function to run the video processing system."""
+    """Main function to run the video processing system in a continuous loop."""
     config = load_configuration()
-
+    
+    # --- Configuration Loading --- #
+    tesseract_path = get_config_value(config, 'SETTINGS', 'TESSERACT_PATH')
+    timestamp_roi = get_config_value(config, 'SETTINGS', 'TIMESTAMP_ROI', is_json=True)
+    ocr_threshold = get_config_value(config, 'SETTINGS', 'OCR_THRESHOLD', is_int=True)
+    ocr_fluctuation_seconds = get_config_value(config, 'SETTINGS', 'OCR_FLUCTUATION_SECONDS', is_int=True)
+    target_times = get_config_value(config, 'SETTINGS', 'TARGET_TIMES', is_list=True)
+    debug_ocr = config.getboolean('SETTINGS', 'DEBUG_OCR', fallback=False)
+    
     try:
-        # Read all settings from the [SETTINGS] section
-        pytesseract.pytesseract.tesseract_cmd = get_config_value(config, 'SETTINGS', 'TESSERACT_PATH')
-        target_times = get_config_value(config, 'SETTINGS', 'TARGET_TIMES', is_list=True)
-        timestamp_roi = get_config_value(config, 'SETTINGS', 'TIMESTAMP_ROI', is_json=True)
-        ocr_threshold = get_config_value(config, 'SETTINGS', 'OCR_THRESHOLD', is_int=True)
-        ocr_fluctuation_seconds = get_config_value(config, 'SETTINGS', 'OCR_FLUCTUATION_SECONDS', is_int=True)
-        debug_ocr = config.getboolean('SETTINGS', 'DEBUG_OCR', fallback=False)
-        
-        # Use a fallback for scan_interval if not present
-        try:
-            scan_interval = config.getint('SETTINGS', 'SCAN_INTERVAL_SECONDS')
-        except (NoSectionError, NoOptionError):
-            print("INFO: 'SCAN_INTERVAL_SECONDS' not found in [SETTINGS]. Defaulting to 60 seconds.")
-            scan_interval = 60
+        scan_interval = config.getint('SETTINGS', 'SCAN_INTERVAL_SECONDS')
+    except (NoOptionError, NoSectionError):
+        scan_interval = 60
+        print(f"INFO: 'SCAN_INTERVAL_SECONDS' not in config. Defaulting to {scan_interval} seconds.")
 
-        # Parse the folder pairs from the [FOLDER_PAIRS] section
-        folders_data = get_folder_pairs(config)
+    if os.path.exists(tesseract_path):
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+    else:
+        print(f"ERROR: Tesseract executable not found at '{tesseract_path}'.")
+        sys.exit(1)
 
-    except SystemExit:
-        # Exit if there was a critical configuration error
-        return
-
+    folders_data = load_folder_pairs(config)
+    
     target_times.sort(key=lambda t: time_str_to_time_obj(t) or datetime.min.time())
 
     print("\n--- Automated Video Processing System (Continuous Monitoring) ---")
-    print(f"Scanning {len(folders_data)} folder pair(s) every {scan_interval} seconds.")
+    print(f"Scanning {len(folders_data)} folder pair(s) every {scan_interval} seconds. Press Ctrl+C to stop.")
 
     try:
         while True:
             print(f"\n{'='*60}\nINFO: Starting scan at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
+            
             processed_files = get_processed_files(PROCESSED_FILES_DB)
             processed_files = cleanup_processed_files(PROCESSED_FILES_DB, processed_files, folders_data.keys())
-
+            
             all_new_videos = find_all_unprocessed_videos(folders_data, processed_files)
 
             if not all_new_videos:
@@ -178,52 +183,45 @@ def main():
                 videos_by_day = group_videos_by_day(all_new_videos)
                 
                 oldest_day = sorted(videos_by_day.keys())[0]
-                
+
                 print(f"\n--- Processing Global Oldest Day: {oldest_day} ---")
-                
-                day_videos = sorted(videos_by_day[oldest_day])
-
-                for video_path in day_videos:
-                    normalized_path = os.path.normpath(video_path)
-                    source_folder = os.path.dirname(normalized_path)
-                    # Find the corresponding output folder from our parsed dictionary
-                    output_folder = folders_data.get(source_folder)
-
-                    if not output_folder:
-                        print(f"WARN: No output folder configured for {source_folder}. Skipping.")
-                        continue
+                for video_path in videos_by_day[oldest_day]:
+                    source_dir = os.path.normpath(os.path.dirname(video_path))
+                    output_folder_path = folders_data.get(source_dir)
                     
-                    if not os.path.exists(output_folder):
-                        os.makedirs(output_folder)
-                        print(f"INFO: Created output folder: {output_folder}")
+                    if not output_folder_path:
+                        print(f"WARN: No output folder configured for source: {source_dir}. Skipping file.")
+                        continue
 
+                    if not os.path.exists(output_folder_path):
+                        os.makedirs(output_folder_path)
+                    
+                    print(f"\n--- Processing Video: {os.path.basename(video_path)} ---")
                     process_video_file(
-                        video_path=normalized_path, 
-                        output_folder=output_folder, 
+                        video_path=video_path,
+                        output_folder=output_folder_path,
                         timestamp_roi=timestamp_roi,
                         ocr_threshold=ocr_threshold,
                         ocr_fluctuation_seconds=ocr_fluctuation_seconds,
                         target_times=target_times,
                         debug_ocr=debug_ocr
                     )
-                    
-                    processed_files.add(normalized_path)
+                    processed_files.add(video_path)
                     save_processed_files(PROCESSED_FILES_DB, processed_files)
-
+                
                 print(f"\nINFO: Finished processing all files for {oldest_day}.")
 
-            print(f"INFO: Scan complete. Waiting for {scan_interval} seconds...")
+            print(f"\nINFO: Scan complete. Waiting for {scan_interval} seconds...")
             time.sleep(scan_interval)
 
     except KeyboardInterrupt:
-        print("\nINFO: User interrupted the process. System shutting down.")
+        print("\n\nINFO: User interrupted the process. System shutting down.")
     except Exception as e:
-        print(f"\nFATAL ERROR: An unexpected error occurred: {e}")
+        print(f"\nFATAL: An unexpected error occurred: {e}")
         import traceback
-        traceback.print_exc() # Print full stack trace for debugging
-        print("System shutting down.")
+        traceback.print_exc()
     finally:
         sys.exit(0)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
