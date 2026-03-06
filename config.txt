@@ -23,7 +23,4 @@ timestamp_roi = [0, 307, 2150, 3072]
 [Folders]
 # This section maps a full input folder path to a full output folder path in JSON format.
 # IMPORTANT: Use double backslashes (\\) for Windows paths.
-folder_pairs = {
-    "E:\\Records\\Record Plan\\Ch1_CAM01": "E:\\Records\\Record Plan\\Trimmed_CAM01",
-    "E:\\Records\\Record Plan\\Ch1_CAM02": "E:\\Records\\Record Plan\\Trimmed_CAM02"
-}
+folder_pairs = {"E:\\Records\\Record Plan\\Ch1_CAM01": "E:\\Records\\Record Plan\\Trimmed_CAM01", "E:\\Records\\Record Plan\\Ch1_CAM02": "E:\\Records\\Record Plan\\Trimmed_CAM02"}
