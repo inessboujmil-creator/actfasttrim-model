@@ -7,7 +7,7 @@ TESSERACT_PATH = C:\Program Files\Tesseract-OCR\tesseract.exe
 TIMESTAMP_ROI = [0, 307, 2150, 3072]
 
 # The grayscale threshold (0-255) for converting the timestamp to pure black and white.
-OCR_THRESHOLD = 121
+OCR_THRESHOLD = 80
 
 # The maximum number of seconds allowed for the OCR time to jump forward.
 OCR_FLUCTUATION_SECONDS = 300
@@ -19,7 +19,7 @@ TARGET_TIMES = 00:30:00, 01:30:00, 02:30:00, 03:30:00, 04:30:00, 05:30:00, 06:30
 SCAN_INTERVAL_SECONDS = 60
 
 # (Optional) Set to 'true' to save the black-and-white timestamp images for debugging OCR issues.
-DEBUG_OCR = false
+DEBUG_OCR = true
 
 
 [FOLDER_PAIRS]

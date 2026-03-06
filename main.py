@@ -81,21 +81,12 @@ def save_processed_files(db_path, processed_set):
         print(f"WARN: Could not write to processed files database '{db_path}': {e}")
 
 def cleanup_processed_files(db_path, processed_files, all_source_folders):
-    """Removes records of files that no longer exist in source folders."""
-    existing_files = set()
-    for folder in all_source_folders:
-        if os.path.isdir(folder):
-            for filename in os.listdir(folder):
-                existing_files.add(os.path.normpath(os.path.join(folder, filename)))
-
-    cleaned_set = processed_files.intersection(existing_files)
-    
-    if len(cleaned_set) < len(processed_files):
-        removed_count = len(processed_files) - len(cleaned_set)
-        print(f"INFO: Cleaned up {removed_count} deleted video(s) from the processed files list.")
-        save_processed_files(db_path, cleaned_set)
-    
-    return cleaned_set
+    """
+    Keeps a persistent record of all processed files.
+    This function no longer removes entries from the database, even if the source video is deleted.
+    This prevents accidental re-processing.
+    """
+    return processed_files
 
 def find_all_unprocessed_videos(folders_data, processed_files):
     """Scans all folders and returns a flat list of all unprocessed video file paths."""
@@ -151,8 +142,8 @@ def main():
     try:
         scan_interval = config.getint('SETTINGS', 'SCAN_INTERVAL_SECONDS')
     except (NoOptionError, NoSectionError):
-        scan_interval = 60
-        print(f"INFO: 'SCAN_INTERVAL_SECONDS' not in config. Defaulting to {scan_interval} seconds.")
+        scan_interval = 7200
+        print(f"INFO: 'SCAN_INTERVAL_SECONDS' not in config. Defaulting to {scan_interval} seconds (2 hours).")
 
     if os.path.exists(tesseract_path):
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
@@ -197,7 +188,7 @@ def main():
                         os.makedirs(output_folder_path)
                     
                     print(f"\n--- Processing Video: {os.path.basename(video_path)} ---")
-                    process_video_file(
+                    if process_video_file(
                         video_path=video_path,
                         output_folder=output_folder_path,
                         timestamp_roi=timestamp_roi,
@@ -205,9 +196,9 @@ def main():
                         ocr_fluctuation_seconds=ocr_fluctuation_seconds,
                         target_times=target_times,
                         debug_ocr=debug_ocr
-                    )
-                    processed_files.add(video_path)
-                    save_processed_files(PROCESSED_FILES_DB, processed_files)
+                    ):
+                        processed_files.add(video_path)
+                        save_processed_files(PROCESSED_FILES_DB, processed_files)
                 
                 print(f"\nINFO: Finished processing all files for {oldest_day}.")
 
