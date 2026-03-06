@@ -8,7 +8,7 @@ from configparser import ConfigParser, NoSectionError, NoOptionError
 import pytesseract
 
 from src.utils.video import process_video_file
-from src.utils.ocr import time_str_to_time_obj # Changed import
+from src.utils.ocr import time_str_to_time_obj
 
 CONFIG_FILE = 'config.txt'
 PROCESSED_FILES_DB = 'processed_files.json'
@@ -18,7 +18,8 @@ def load_configuration():
     if not os.path.exists(CONFIG_FILE):
         print(f"ERROR: Configuration file '{CONFIG_FILE}' not found.")
         sys.exit(1)
-    config = ConfigParser(strict=False)
+    # Allow for keys without values
+    config = ConfigParser(allow_no_value=True, strict=False)
     config.read(CONFIG_FILE)
     return config
 
@@ -27,6 +28,7 @@ def get_config_value(config, section, option, is_json=False, is_list=False, is_i
     try:
         value = config.get(section, option)
         if is_json:
+            # The value from config is a string, so we need to parse it as JSON
             return json.loads(value)
         if is_list:
             return [item.strip() for item in value.split(',')]
@@ -34,10 +36,31 @@ def get_config_value(config, section, option, is_json=False, is_list=False, is_i
             return int(value)
         return value
     except (NoSectionError, NoOptionError):
-        print(f"ERROR: Missing '{option}' in section '{section}' of the config file.")
+        print(f"ERROR: Missing '{option}' in section '[{section}]' of the config file.")
         sys.exit(1)
     except json.JSONDecodeError:
-        print(f"ERROR: Invalid JSON in '{option}' in section '{section}'.")
+        print(f"ERROR: Invalid JSON format for '{option}' in section '[{section}]'. Expected format: [num, num, num, num]")
+        sys.exit(1)
+
+def get_folder_pairs(config):
+    """Parses the [FOLDER_PAIRS] section of the config file."""
+    folder_pairs = {}
+    try:
+        for key, value in config.items('FOLDER_PAIRS'):
+            # The value is expected to be 'input_path, output_path'
+            paths = [p.strip() for p in value.split(',')]
+            if len(paths) == 2:
+                source_folder, output_folder = paths
+                # Normalize path for consistent matching later
+                folder_pairs[os.path.normpath(source_folder)] = os.path.normpath(output_folder)
+            else:
+                print(f"WARN: Skipping invalid folder pair entry: {key}={value}")
+        if not folder_pairs:
+            print("ERROR: No valid folder pairs found in [FOLDER_PAIRS] section.")
+            sys.exit(1)
+        return folder_pairs
+    except NoSectionError:
+        print("ERROR: Missing [FOLDER_PAIRS] section in the config file.")
         sys.exit(1)
 
 def get_processed_files(db_path):
@@ -112,20 +135,29 @@ def main():
     config = load_configuration()
 
     try:
-        pytesseract.pytesseract.tesseract_cmd = get_config_value(config, 'System', 'tesseract_path')
-        folders_data = get_config_value(config, 'Folders', 'folder_pairs', is_json=True)
-        target_times = get_config_value(config, 'Trimming', 'target_times', is_list=True)
-        timestamp_roi = get_config_value(config, 'Trimming', 'timestamp_roi', is_json=True)
-        ocr_threshold = get_config_value(config, 'Trimming', 'ocr_threshold', is_int=True)
-        ocr_fluctuation_seconds = get_config_value(config, 'Trimming', 'ocr_fluctuation_seconds', is_int=True)
-        scan_interval = get_config_value(config, 'System', 'scan_interval_seconds', is_int=True)
-        debug_ocr = config.getboolean('System', 'debug_ocr', fallback=False)
+        # Read all settings from the [SETTINGS] section
+        pytesseract.pytesseract.tesseract_cmd = get_config_value(config, 'SETTINGS', 'TESSERACT_PATH')
+        target_times = get_config_value(config, 'SETTINGS', 'TARGET_TIMES', is_list=True)
+        timestamp_roi = get_config_value(config, 'SETTINGS', 'TIMESTAMP_ROI', is_json=True)
+        ocr_threshold = get_config_value(config, 'SETTINGS', 'OCR_THRESHOLD', is_int=True)
+        ocr_fluctuation_seconds = get_config_value(config, 'SETTINGS', 'OCR_FLUCTUATION_SECONDS', is_int=True)
+        debug_ocr = config.getboolean('SETTINGS', 'DEBUG_OCR', fallback=False)
+        
+        # Use a fallback for scan_interval if not present
+        try:
+            scan_interval = config.getint('SETTINGS', 'SCAN_INTERVAL_SECONDS')
+        except (NoSectionError, NoOptionError):
+            print("INFO: 'SCAN_INTERVAL_SECONDS' not found in [SETTINGS]. Defaulting to 60 seconds.")
+            scan_interval = 60
+
+        # Parse the folder pairs from the [FOLDER_PAIRS] section
+        folders_data = get_folder_pairs(config)
 
     except SystemExit:
+        # Exit if there was a critical configuration error
         return
 
-    # Sort target times chronologically
-    target_times.sort(key=lambda t: time_str_to_time_obj(t))
+    target_times.sort(key=lambda t: time_str_to_time_obj(t) or datetime.min.time())
 
     print("\n--- Automated Video Processing System (Continuous Monitoring) ---")
     print(f"Scanning {len(folders_data)} folder pair(s) every {scan_interval} seconds.")
@@ -154,6 +186,7 @@ def main():
                 for video_path in day_videos:
                     normalized_path = os.path.normpath(video_path)
                     source_folder = os.path.dirname(normalized_path)
+                    # Find the corresponding output folder from our parsed dictionary
                     output_folder = folders_data.get(source_folder)
 
                     if not output_folder:
@@ -186,6 +219,8 @@ def main():
         print("\nINFO: User interrupted the process. System shutting down.")
     except Exception as e:
         print(f"\nFATAL ERROR: An unexpected error occurred: {e}")
+        import traceback
+        traceback.print_exc() # Print full stack trace for debugging
         print("System shutting down.")
     finally:
         sys.exit(0)
