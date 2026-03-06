@@ -1,29 +1,29 @@
-
-[SETTINGS]
+[System]
 # Path to the Tesseract executable.
-# Example: C:\Program Files\Tesseract-OCR\tesseract.exe
-TESSERACT_PATH = C:\Program Files\Tesseract-OCR\tesseract.exe
+# Example: C:\\Program Files\\Tesseract-OCR\\tesseract.exe
+tesseract_path = C:\Program Files\Tesseract-OCR\tesseract.exe
+
+# How often (in seconds) to scan the source folders for new videos.
+scan_interval_seconds = 60
+
+# (Optional) Set to 'true' to save the black-and-white timestamp images for debugging OCR issues.
+debug_ocr = false
+
+[Trimming]
+# A comma-separated list of target times in HH:MM:SS format to find and trim.
+target_times = 00:30:00, 01:30:00, 02:30:00, 03:30:00, 04:30:00, 05:30:00, 06:30:00, 08:30:00, 09:45:00, 10:45:00, 13:00:00, 14:00:00, 16:00:00, 17:45:00, 20:30:00, 21:30:00, 22:30:00, 23:30:00
+
+# The grayscale threshold (0-255) for converting the timestamp to pure black and white.
+ocr_threshold = 121
 
 # The region of the video frame where the timestamp is located.
 # Format is a JSON array: [y_start, y_end, x_start, x_end]
-TIMESTAMP_ROI = [0, 307, 2150, 3072]
+timestamp_roi = [0, 307, 2150, 3072]
 
-# The grayscale threshold (0-255) for converting the timestamp to pure black and white.
-OCR_THRESHOLD = 121
-
-# The maximum number of seconds allowed for the OCR time to jump forward.
-OCR_FLUCTUATION_SECONDS = 300
-
-# A comma-separated list of target times in HH:MM:SS format to find and trim.
-TARGET_TIMES = 00:30:00, 01:30:00, 02:30:00, 03:30:00, 04:30:00, 05:30:00, 06:30:00, 08:30:00, 09:45:00, 10:45:00, 13:00:00, 14:00:00, 16:00:00, 17:45:00, 20:30:00, 21:30:00, 22:30:00, 23:30:00
-
-# (Optional) Set to 'true' to save the black-and-white timestamp images for debugging OCR issues.
-DEBUG_OCR = false
-
-
-[FOLDER_PAIRS]
-# This section maps a full input folder path to a full output folder path.
-# Format: unique_key = full\path\to\input, full\path\to\output
-pair_1 = E:\Records\Record Plan\Ch1_CAM01, E:\Records\Record Plan\Trimmed_CAM01
-pair_2 = E:\Records\Record Plan\Ch1_CAM02, E:\Records\Record Plan\Trimmed_CAM02
-
+[Folders]
+# This section maps a full input folder path to a full output folder path in JSON format.
+# IMPORTANT: Use double backslashes (\\) for Windows paths.
+folder_pairs = {
+    "E:\\Records\\Record Plan\\Ch1_CAM01": "E:\\Records\\Record Plan\\Trimmed_CAM01",
+    "E:\\Records\\Record Plan\\Ch1_CAM02": "E:\\Records\\Record Plan\\Trimmed_CAM02"
+}
